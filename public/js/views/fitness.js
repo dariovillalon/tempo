@@ -793,11 +793,39 @@ function bodyPeso() {
   return form + chart + `<div class="card"><div class="card-title">Pesajes</div><div class="fit-hist">${rows}</div></div>`;
 }
 
+// Calentamiento de movilidad (antes de entrenar o jugar). Guía, no se registra.
+const WARMUP = [
+  { name: "Movilidad de cadera — world's greatest stretch", cue: 'Zancada larga + rotás el torso hacia la pierna de adelante. 5 por lado.', yt: 'worlds greatest stretch' },
+  { name: 'Movilidad torácica — libro abierto', cue: 'De costado en el piso, abrí el brazo de arriba girando el tronco. 8 por lado.', yt: 'open book thoracic mobility exercise' },
+  { name: 'Dislocaciones de hombro con palo o banda', cue: 'Pasá un palo/banda de adelante hacia atrás por encima de la cabeza, brazos estirados. 10 lentas.', yt: 'shoulder dislocates band' },
+  { name: 'Face pulls con banda (activación)', cue: 'Tirá la banda hacia la cara separando los codos. Despierta el hombro posterior. 15.', yt: 'band face pull' },
+  { name: 'Sentadilla profunda con balanceo', cue: 'Bajá a sentadilla profunda y balanceá suave abriendo las caderas. 30 seg.', yt: 'prying goblet squat mobility' },
+];
+// Ejercicios de core/rotación para tenis y pádel (sí se registran como serie).
+const CORE_POOL = [
+  { name: 'Pallof press (anti-rotación)', sets: 3, reps: '12/lado', cue: 'En polea o banda al costado, llevá las manos al frente sin dejar que el torso gire. Core fuerte = saque y derecha más potentes.', yt: 'pallof press technique' },
+  { name: 'Leñador en polea (woodchopper)', sets: 3, reps: '12/lado', cue: 'En diagonal de arriba hacia abajo, girando desde tronco y cadera (no los brazos). Imita el golpe de tenis.', yt: 'cable woodchopper exercise' },
+  { name: 'Lanzamiento rotacional de balón', sets: 3, reps: '8/lado', cue: 'Lanzá un balón medicinal contra la pared rotando el tronco con potencia. Explosividad del saque.', yt: 'rotational medicine ball throw tennis' },
+  { name: 'Plancha lateral', sets: 3, reps: '30s/lado', cue: 'Cuerpo en línea, cadera arriba. Estabilidad lateral para frenar y cambiar de dirección.', yt: 'side plank technique' },
+];
+// Devuelve 2 ejercicios de core distintos según el día.
+const coreForDay = (i) => [CORE_POOL[(i * 2) % CORE_POOL.length], CORE_POOL[(i * 2 + 1) % CORE_POOL.length]];
+// Rutina dedicada de movilidad + hombro + estiramientos (días libres o post-partido).
+const MOBILITY_ROUTINE = [
+  { name: 'Libro abierto (columna torácica)', cue: '8 por lado, lento, siguiendo la mano con la mirada.', yt: 'open book thoracic mobility exercise' },
+  { name: '90/90 de cadera', cue: 'Sentado, girá ambas rodillas de un lado al otro. 8 por lado.', yt: '90 90 hip mobility drill' },
+  { name: 'Estiramiento de flexor de cadera', cue: 'Zancada, metés la cadera adelante. 30 seg por lado. Clave si estás mucho sentado.', yt: 'hip flexor stretch' },
+  { name: 'Manguito rotador — rotación externa con banda', cue: 'Codo pegado al cuerpo, rotás el antebrazo hacia afuera. 15 por lado. Previene la lesión típica del tenista.', yt: 'external rotation band rotator cuff' },
+  { name: 'Estiramiento de antebrazo y muñeca', cue: '30 seg por lado, palma hacia arriba y abajo. Previene codo de tenista.', yt: 'forearm wrist stretch tennis elbow' },
+  { name: 'Movilidad de tobillo a la pared', cue: 'Rodilla hacia la pared sin levantar el talón. 10 por lado. Mejora las frenadas.', yt: 'ankle mobility wall drill' },
+  { name: 'Estiramiento figura-4 (glúteo / piriforme)', cue: '30 seg por lado, acostado, tirando de la pierna hacia el pecho.', yt: 'figure 4 glute stretch' },
+];
+
 function bodyGym() {
   const f = F(), plan = f.plan || defaultFitnessPlan(), day = plan.days[gymDayIndex] || plan.days[0];
   const head = `<div class="card"><div class="card-title">${escapeHtml(plan.name)}</div><div class="muted text-xs">${escapeHtml(plan.note)}</div>
       <div class="fit-day-tabs">${plan.days.map((dd, i) => `<button class="fit-day-tab ${i === gymDayIndex ? 'active' : ''}" data-gymday="${i}">${escapeHtml(dd.name.split(' · ')[0])}</button>`).join('')}</div></div>`;
-  const rows = day.exercises.map((ex, i) => {
+  const renderEx = (ex, i) => {
     const last = lastWeightFor(ex.name), exKey = gymDayIndex + ':' + i, open = expandedEx.has(exKey);
     const ls = lastSessionFor(ex.name);
     const yt = ex.yt ? `https://www.youtube.com/results?search_query=${encodeURIComponent(ex.yt)}` : null;
@@ -812,15 +840,22 @@ function bodyGym() {
       <div class="fit-sets" data-name="${escapeHtml(ex.name)}">${setRows}${nSets < 4 ? '<button class="fit-addset" data-addset="1">+ serie</button>' : ''}</div>
       ${open && ex.cue ? `<div class="fit-ex-how"><p>${escapeHtml(ex.cue)}</p>${yt ? `<a href="${yt}" target="_blank" rel="noopener" class="fit-yt">▶ Ver en YouTube</a>` : ''}</div>` : ''}
     </div>`;
-  }).join('');
-  const log = `<div class="card"><div class="card-title">Registrar sesión — ${escapeHtml(day.name)}</div><div class="muted text-xs" style="margin-bottom:6px">Cargá kg y reps de cada serie. Dejá vacías las que no hagas: cuento las que llenes (hasta 4).</div>${rows}<button class="btn btn-primary btn-sm" id="fit-gym-save" style="margin-top:12px">Guardar sesión</button></div>`;
+  };
+  const ytLink = (q) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
+  const moveItem = (m) => `<div class="fit-move"><div class="fit-move-n">${escapeHtml(m.name)} <a href="${ytLink(m.yt)}" target="_blank" rel="noopener" class="fit-yt-mini">▶</a></div><div class="fit-move-cue">${escapeHtml(m.cue)}</div></div>`;
+  const warmup = `<div class="card"><div class="card-title">🔥 Calentamiento · 5 min (antes de entrenar o jugar)</div><div class="muted text-xs" style="margin-bottom:8px">Movilidad dinámica para cadera, columna y hombro.</div>${WARMUP.map(moveItem).join('')}</div>`;
+  const mobility = `<div class="card"><div class="card-title">🤸 Movilidad & tenis (días libres o post-partido)</div><div class="muted text-xs" style="margin-bottom:8px">~10 min de movilidad, cuidado de hombro y estiramientos. Suma flexibilidad y previene lesiones.</div>${MOBILITY_ROUTINE.map(moveItem).join('')}</div>`;
+  const mainRows = day.exercises.map(renderEx).join('');
+  const core = coreForDay(gymDayIndex);
+  const coreRows = `<div class="fit-section-h">🎾 Core / rotación (tenis y pádel)</div>` + core.map((ex, idx) => renderEx(ex, day.exercises.length + idx)).join('');
+  const log = `<div class="card"><div class="card-title">Registrar sesión — ${escapeHtml(day.name)}</div><div class="muted text-xs" style="margin-bottom:6px">Cargá kg y reps de cada serie. Dejá vacías las que no hagas: cuento las que llenes (hasta 4).</div>${mainRows}${coreRows}<button class="btn btn-primary btn-sm" id="fit-gym-save" style="margin-top:12px">Guardar sesión</button></div>`;
   const logs = [...(f.workoutLogs || [])].sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 12);
   const hist = logs.length ? logs.map(l => `<div class="fit-log"><div class="fit-log-head"><strong>${fmtDay(l.date)}</strong> · ${escapeHtml(l.dayName || '')}<button class="btn btn-ghost btn-sm" data-del-log="${l.id}" style="float:right">✕</button></div><div class="fit-log-body">${(l.entries || []).map(e => {
     const sets = e.setLog || ((num(e.weight) || e.reps) ? [{ weight: e.weight, reps: e.reps }] : []);
     const txt = sets.map(s => `${num(s.weight) ? s.weight : '–'}×${(s.reps != null && s.reps !== '') ? s.reps : '–'}`).join('  ');
     return `<div class="fit-log-ex"><span class="fit-log-exn">${escapeHtml(e.name.split(' (')[0])}</span> <strong>${sets.length} ser</strong> <span class="muted">${escapeHtml(txt)}</span></div>`;
   }).join('')}</div></div>`).join('') : '<div class="muted text-xs">Todavía no registraste sesiones.</div>';
-  return head + log + `<div class="card"><div class="card-title">Sesiones recientes</div><div class="fit-logs">${hist}</div></div>`;
+  return head + warmup + log + `<div class="card"><div class="card-title">Sesiones recientes</div><div class="fit-logs">${hist}</div></div>` + mobility;
 }
 
 function bodyReportes() {
@@ -840,21 +875,77 @@ function bodyReportes() {
 
   const card = (title, body, sub) => `<div class="card"><div class="card-title">${title}${sub ? ` <span class="muted text-xs">${sub}</span>` : ''}</div><div style="margin-top:8px">${body}</div></div>`;
 
-  // stats de adherencia
+  // stats de adherencia + promedios
+  const tkey = todayKey();
+  const calDays = dayKeys.filter(kk => kk !== tkey && num(f.days[kk].calories) > 0); // excluye hoy (incompleto)
   const logged = dayKeys.filter(kk => num(f.days[kk].calories) > 0).length;
+  const avgCal = calDays.length ? Math.round(calDays.reduce((a, kk) => a + num(f.days[kk].calories), 0) / calDays.length) : null;
+  const avgProt = calDays.length ? Math.round(calDays.reduce((a, kk) => a + num(f.days[kk].protein), 0) / calDays.length) : null;
   const protOk = t ? dayKeys.filter(kk => num(f.days[kk].protein) >= t.protein * 0.9).length : 0;
+  const calOk = t ? calDays.filter(kk => num(f.days[kk].calories) >= t.target * 0.92).length : 0;
   const sessions = (f.workoutLogs || []).filter(l => l.date >= cutoff).length;
   const sleepAvg = avgField(f.days, reportDays, 'sleepHours');
   const waterAvg = avgField(f.days, reportDays, 'waterMl');
+  const pct = (a, b) => b > 0 ? Math.round(a / b * 100) : 0;
   const stats = `<div class="card"><div class="card-title">Resumen del período</div><div class="fit-grid">
+      <div class="fit-tile"><div class="fit-tile-lbl">Cal promedio</div><div class="fit-tile-val">${avgCal != null ? avgCal : '—'}<span> kcal</span></div></div>
+      <div class="fit-tile"><div class="fit-tile-lbl">Proteína prom</div><div class="fit-tile-val">${avgProt != null ? avgProt : '—'}<span> g</span></div></div>
       <div class="fit-tile"><div class="fit-tile-lbl">Días registrados</div><div class="fit-tile-val">${logged}</div></div>
-      <div class="fit-tile"><div class="fit-tile-lbl">Días proteína ✔</div><div class="fit-tile-val">${protOk}</div></div>
       <div class="fit-tile"><div class="fit-tile-lbl">Sesiones de gym</div><div class="fit-tile-val">${sessions}</div></div>
       <div class="fit-tile"><div class="fit-tile-lbl">Sueño prom</div><div class="fit-tile-val">${sleepAvg != null ? sleepAvg.toFixed(1) : '—'}<span> h</span></div></div>
       <div class="fit-tile"><div class="fit-tile-lbl">Agua prom</div><div class="fit-tile-val">${waterAvg != null ? (waterAvg / 1000).toFixed(1) : '—'}<span> L</span></div></div>
     </div></div>`;
 
-  return sel + stats
+  // adherencia (% de días que cumpliste)
+  let adher = '';
+  if (t && logged > 0) {
+    const aRow = (label, n, d, color) => `<div class="fit-prog-row" style="margin-top:8px"><span>${label}</span><strong>${n}/${d} días · ${pct(n, d)}%</strong></div>${bar(pct(n, d), 100, color)}`;
+    adher = `<div class="card"><div class="card-title">Adherencia</div>
+      ${aRow('Proteína en objetivo', protOk, logged, 'var(--green)')}
+      ${aRow('Calorías en superávit', calOk, calDays.length || logged, 'var(--accent)')}
+    </div>`;
+  }
+
+  // balance energético + ritmo estimado
+  let balance = '';
+  if (t && avgCal != null) {
+    const surplus = avgCal - t.maintenance;
+    const kgWeek = surplus * 7 / 7700; // ~7700 kcal por kg (estimación)
+    const sg = surplus >= 0 ? '+' : '';
+    const lvl = surplus < 0 ? 'warn' : (surplus > 600 ? 'warn' : 'ok');
+    const msg = surplus < 0
+      ? `Comés en promedio ${sg}${surplus} kcal vs tu mantenimiento (${t.maintenance}). Estás por debajo: así no sumás masa, subí las calorías.`
+      : `Superávit promedio de ${sg}${surplus} kcal/día (comés ${avgCal}, mantenés con ${t.maintenance}). Ritmo teórico ~${kgWeek >= 0 ? '+' : ''}${kgWeek.toFixed(2)} kg/sem.`;
+    balance = `<div class="card"><div class="card-title">Balance energético</div><div class="fit-alert ${lvl}">${msg}</div></div>`;
+  }
+
+  // composición corporal (cambio en el período)
+  let comp = '';
+  const wsC = ws.filter(w => w.muscleKg != null || w.bodyFatPct != null);
+  if (wsC.length >= 2) {
+    const mk = (w) => w.muscleKg != null ? +w.muscleKg : (w.bodyFatPct != null ? w.kg * (1 - w.bodyFatPct / 100) : null);
+    const fk = (w) => w.bodyFatPct != null ? w.kg * (w.bodyFatPct / 100) : null;
+    const a0 = wsC[0], a1 = wsC[wsC.length - 1];
+    const dM = (mk(a0) != null && mk(a1) != null) ? mk(a1) - mk(a0) : null;
+    const dF = (fk(a0) != null && fk(a1) != null) ? fk(a1) - fk(a0) : null;
+    const dW = +a1.kg - +a0.kg;
+    const sgn = (v) => v >= 0 ? '+' : '';
+    let verdict = '';
+    if (dM != null && dF != null) {
+      if (dM > 0 && dF <= 0.2) verdict = `<div class="fit-alert ok" style="margin-top:10px">✅ Recomposición ideal: ganás músculo casi sin grasa.</div>`;
+      else if (dF > Math.abs(dM)) verdict = `<div class="fit-alert warn" style="margin-top:10px">⚠️ Sumaste más grasa que músculo: bajá un poco el superávit.</div>`;
+      else verdict = `<div class="fit-alert info" style="margin-top:10px">Vas sumando ambos; lo bueno es que el músculo crezca más que la grasa.</div>`;
+    }
+    comp = `<div class="card"><div class="card-title">Composición corporal <span class="muted text-xs">${fmtDay(a0.date)} → ${fmtDay(a1.date)}</span></div>
+      <div class="fit-grid">
+        <div class="fit-tile"><div class="fit-tile-lbl">Δ Peso</div><div class="fit-tile-val">${sgn(dW)}${dW.toFixed(1)}<span> kg</span></div></div>
+        ${dM != null ? `<div class="fit-tile"><div class="fit-tile-lbl">Δ Músculo</div><div class="fit-tile-val">${sgn(dM)}${dM.toFixed(1)}<span> kg</span></div></div>` : ''}
+        ${dF != null ? `<div class="fit-tile"><div class="fit-tile-lbl">Δ Grasa</div><div class="fit-tile-val">${sgn(dF)}${dF.toFixed(1)}<span> kg</span></div></div>` : ''}
+      </div>${verdict}
+    </div>`;
+  }
+
+  return sel + stats + adher + balance + comp
     + card('Peso (kg)', chartLine(weightSeries, { color: 'var(--accent)', dec: 1 }))
     + card('% Grasa corporal', chartLine(bfSeries, { color: 'var(--red)', dec: 1 }), 'cargá el % en Peso')
     + card('Músculo (kg)', chartLine(muscleSeries, { color: 'var(--green)', dec: 1 }), 'de tu balanza o estimado')
@@ -914,8 +1005,8 @@ const lastSessionFor = (exName) => {
   return null;
 };
 
-const TABS = [['resumen', 'Resumen'], ['dieta', 'Dieta'], ['comidas', 'Comidas'], ['bienestar', 'Bienestar'], ['cuerpo', 'Cuerpo'], ['peso', 'Peso'], ['gym', 'Gym'], ['reportes', 'Reportes'], ['aprende', 'Aprendé'], ['perfil', 'Perfil']];
-const bodyFor = (id) => ({ resumen: bodyResumen, dieta: bodyDieta, bienestar: bodyBienestar, cuerpo: bodyCuerpo, comidas: bodyComidas, peso: bodyPeso, gym: bodyGym, reportes: bodyReportes, aprende: bodyAprende, perfil: bodyPerfil }[id] || bodyResumen)();
+const TABS = [['resumen', 'Resumen'], ['dieta', 'Dieta'], ['comidas', 'Comidas'], ['bienestar', 'Bienestar'], ['cuerpo', 'Cuerpo'], ['peso', 'Peso'], ['gym', 'Gym'], ['reportes', 'Reportes'], ['perfil', 'Perfil']];
+const bodyFor = (id) => ({ resumen: bodyResumen, dieta: bodyDieta, bienestar: bodyBienestar, cuerpo: bodyCuerpo, comidas: bodyComidas, peso: bodyPeso, gym: bodyGym, reportes: bodyReportes, perfil: bodyPerfil }[id] || bodyResumen)();
 
 // ---- wiring ----
 function wire(root) {
