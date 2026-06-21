@@ -3017,3 +3017,19 @@ body.focus-on { overflow: hidden; }
 
 /* ---- Fitness: por qué de cada sugerencia de dieta ---- */
 .fit-why { font-size: 11px; color: var(--accent); margin-top: 2px; }
+
+/* ---- Fitness: tabla-resumen prolija (Resumen) ---- */
+.fit-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+.fit-table td { padding: 9px 8px; border-bottom: 1px solid var(--border); font-size: 13.5px; vertical-align: middle; }
+.fit-table tr:last-child td { border-bottom: none; }
+.fit-table .fit-tl { color: var(--text-2); white-space: nowrap; }
+.fit-table .fit-tv { color: var(--text); font-weight: 600; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.fit-table .fit-te { font-size: 11.5px; text-align: right; white-space: nowrap; }
+.fit-table .fit-tk { width: 22px; text-align: center; }
+@media (max-width: 520px) {
+  .fit-table .fit-te { display: none; }
+}
+
+/* ---- Fitness: última sesión por ejercicio (sobrecarga progresiva) ---- */
+.fit-ex-last { font-size: 11.5px; color: var(--text-2); background: var(--blue-soft); border-radius: 6px; padding: 4px 8px; margin: 6px 0; }
+.fit-ex-last strong { color: var(--text); font-variant-numeric: tabular-nums; }

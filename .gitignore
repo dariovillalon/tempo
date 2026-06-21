@@ -19,3 +19,6 @@ npm-debug.log*
 
 # Logs
 *.log
+
+# Archivos de prueba temporales
+.write_test_xyz
