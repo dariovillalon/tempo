@@ -537,6 +537,64 @@ const SORE_TIPS = {
 };
 
 // ---- bodies ----
+// Opciones proteicas para cerrar el día (merienda/cena).
+const CLOSE_IDEAS = [
+  { name: 'Yogur griego (170 g) + 30 g de maní', k: 320, p: 24 },
+  { name: 'Batido: whey + banana + leche', k: 350, p: 35 },
+  { name: 'Pechuga de pollo (200 g) + 1 taza de arroz', k: 520, p: 52 },
+  { name: 'Atún (1 lata) + 2 huevos + pan', k: 420, p: 42 },
+  { name: 'Requesón/ricota (200 g) + frutos rojos', k: 280, p: 28 },
+  { name: 'Caseína o barra de proteína', k: 200, p: 25 },
+];
+// Tarjeta "cómo cerrar el día": calcula lo que falta y sugiere comidas para llegar.
+function closeTheDayCard(k, t) {
+  const d = getDay(k); const cal = num(d.calories), prot = num(d.protein);
+  const gapCal = t.target - cal, gapProt = t.protein - prot;
+  if (gapCal <= 120 && gapProt <= 6)
+    return `<div class="card"><div class="card-title">Cierre del día</div><div class="fit-alert ok">✅ Llegaste a tus objetivos de hoy (${cal}/${t.target} kcal · ${prot}/${t.protein} g proteína). Buenísimo.</div></div>`;
+  // Prioriza opciones cuya proteína se acerca a lo que falta.
+  const ideas = [...CLOSE_IDEAS].sort((a, b) => Math.abs(a.p - Math.max(0, gapProt)) - Math.abs(b.p - Math.max(0, gapProt))).slice(0, 4);
+  const items = ideas.map(o => `<div class="fit-move"><div class="fit-move-n">${escapeHtml(o.name)}</div><div class="fit-move-cue">~${o.k} kcal · ${o.p} g proteína</div></div>`).join('');
+  return `<div class="card"><div class="card-title">Cómo cerrar el día</div>
+    <div class="fit-alert info">Te faltan <b>~${Math.max(0, Math.round(gapCal))} kcal</b> y <b>~${Math.max(0, Math.round(gapProt))} g de proteína</b>. Elegí 1–2 de estas para llegar:</div>
+    ${items}</div>`;
+}
+// Cuenta días consecutivos (hacia atrás) que cumplen una condición. Hoy incompleto no rompe la racha.
+function streakDays(predFn) {
+  const days = F().days || {};
+  let count = 0;
+  for (let i = 0; i < 400; i++) {
+    const rec = days[todayKey(addDays(new Date(), -i))];
+    const ok = rec && predFn(rec);
+    if (ok) count++;
+    else if (i === 0) continue;
+    else break;
+  }
+  return count;
+}
+function streakCard(k, t) {
+  const protStreak = t ? streakDays(r => num(r.protein) >= t.protein * 0.9) : 0;
+  const logStreak = streakDays(r => num(r.calories) > 0);
+  const weekAgo = todayKey(addDays(new Date(), -6));
+  const trainings = (F().workoutLogs || []).filter(l => l.date >= weekAgo).length;
+  return `<div class="card"><div class="card-title">Tu racha</div>
+    <div class="fit-grid">
+      <div class="fit-tile"><div class="fit-tile-lbl">🔥 Proteína seguida</div><div class="fit-tile-val">${protStreak}<span> días</span></div></div>
+      <div class="fit-tile"><div class="fit-tile-lbl">🏋️ Entrenos (7 días)</div><div class="fit-tile-val">${trainings}</div></div>
+      <div class="fit-tile"><div class="fit-tile-lbl">📋 Registro seguido</div><div class="fit-tile-val">${logStreak}<span> días</span></div></div>
+    </div>
+    ${protStreak >= 3 ? `<div class="fit-alert ok" style="margin-top:10px">💪 ${protStreak} días seguidos cumpliendo proteína. ¡No cortes la racha!</div>` : ''}
+  </div>`;
+}
+// Aviso de día de partido (tenis/pádel). Se setea desde la pestaña Gym (F().nextMatch).
+function matchAdvice(k) {
+  const nm = F().nextMatch;
+  if (!nm || nm < k) return '';
+  const tomorrow = todayKey(addDays(new Date(), 1));
+  if (nm === k) return `<div class="card"><div class="card-title">🎾 Hoy jugás tenis/pádel</div><div class="fit-alert info">Sumá ~50–80 g de carbohidratos 2–3 h antes (pasta, arroz, fruta), hidratá bien y hacé el calentamiento de movilidad. Dejá el gym de piernas pesado para otro día.</div></div>`;
+  if (nm === tomorrow) return `<div class="card"><div class="card-title">🎾 Mañana jugás</div><div class="fit-alert info">Hoy evitá piernas pesadas (sentadilla/peso muerto al límite) para no jugar con las piernas cargadas. Cargá bien los carbohidratos y dormí 8 h.</div></div>`;
+  return `<div class="card"><div class="card-title">🎾 Próximo partido</div><div class="muted text-xs">Jugás el ${fmtDay(nm)}. Te aviso los ajustes el día antes.</div></div>`;
+}
 function bodyResumen() {
   const f = F(), p = f.profile, k = tk(), t = dayTargets(k), today = getDay(k), tr = trend();
   const lastKg = tr.points.length ? tr.points[tr.points.length - 1].kg : (num(p.weightKg) || null);
@@ -571,7 +629,8 @@ function bodyResumen() {
   const recs = recommendations();
   const recsHtml = `<div class="card"><div class="card-title">Recomendaciones</div><div class="fit-rec">${recs.map(r => `<div class="fit-rec-item ${r.level}">${escapeHtml(r.text)}</div>`).join('')}</div></div>`;
   const bienestar = t ? daySummaryTable(k) : '';
-  return tiles + hoy + bienestar + nextCard + tipCard + recsHtml;
+  const cierre = t ? closeTheDayCard(k, t) : '';
+  return tiles + matchAdvice(k) + hoy + bienestar + cierre + streakCard(k, t) + nextCard + tipCard + recsHtml;
 }
 
 function wellnessTrackCard(k) {
@@ -810,6 +869,8 @@ const CORE_POOL = [
 ];
 // Devuelve 2 ejercicios de core distintos según el día.
 const coreForDay = (i) => [CORE_POOL[(i * 2) % CORE_POOL.length], CORE_POOL[(i * 2 + 1) % CORE_POOL.length]];
+// Tope de repeticiones objetivo (para sobrecarga progresiva). Ignora ejercicios por tiempo (30s).
+const repTargetHi = (reps) => { const s = String(reps); if (/\d\s*s/i.test(s)) return null; const nums = (s.match(/\d+/g) || []).map(Number); return nums.length ? Math.max(...nums) : null; };
 // Rutina dedicada de movilidad + hombro + estiramientos (días libres o post-partido).
 const MOBILITY_ROUTINE = [
   { name: 'Libro abierto (columna torácica)', cue: '8 por lado, lento, siguiendo la mano con la mirada.', yt: 'open book thoracic mobility exercise' },
@@ -836,7 +897,11 @@ function bodyGym() {
         <div class="fit-ex-name">${escapeHtml(ex.name)}<span class="muted text-xs"> · meta ${ex.sets}×${escapeHtml(String(ex.reps))}</span></div>
         ${ex.cue ? `<button class="fit-how" data-how="${exKey}">${open ? '▾' : '▸'} cómo</button>` : ''}
       </div>
-      ${ls ? `<div class="fit-ex-last">📈 Última (${fmtDay(ls.date)}): <strong>${escapeHtml(ls.txt)}</strong> · 🎯 igualá o superá</div>` : ''}
+      ${ls ? (() => {
+        const hi = repTargetHi(ex.reps);
+        const up = (hi && ls.reps && ls.reps >= hi);
+        return `<div class="fit-ex-last ${up ? 'fit-ex-up' : ''}">📈 Última (${fmtDay(ls.date)}): <strong>${escapeHtml(ls.txt)}</strong> · ${up ? `⬆️ cumpliste las reps — subí ~2.5 kg` : '🎯 igualá o superá'}</div>`;
+      })() : ''}
       <div class="fit-sets" data-name="${escapeHtml(ex.name)}">${setRows}${nSets < 4 ? '<button class="fit-addset" data-addset="1">+ serie</button>' : ''}</div>
       ${open && ex.cue ? `<div class="fit-ex-how"><p>${escapeHtml(ex.cue)}</p>${yt ? `<a href="${yt}" target="_blank" rel="noopener" class="fit-yt">▶ Ver en YouTube</a>` : ''}</div>` : ''}
     </div>`;
@@ -845,6 +910,9 @@ function bodyGym() {
   const moveItem = (m) => `<div class="fit-move"><div class="fit-move-n">${escapeHtml(m.name)} <a href="${ytLink(m.yt)}" target="_blank" rel="noopener" class="fit-yt-mini">▶</a></div><div class="fit-move-cue">${escapeHtml(m.cue)}</div></div>`;
   const warmup = `<div class="card"><div class="card-title">🔥 Calentamiento · 5 min (antes de entrenar o jugar)</div><div class="muted text-xs" style="margin-bottom:8px">Movilidad dinámica para cadera, columna y hombro.</div>${WARMUP.map(moveItem).join('')}</div>`;
   const mobility = `<div class="card"><div class="card-title">🤸 Movilidad & tenis (días libres o post-partido)</div><div class="muted text-xs" style="margin-bottom:8px">~10 min de movilidad, cuidado de hombro y estiramientos. Suma flexibilidad y previene lesiones.</div>${MOBILITY_ROUTINE.map(moveItem).join('')}</div>`;
+  const matchSetter = `<div class="card"><div class="card-title">🎾 Próximo partido (tenis / pádel)</div>
+    <div class="row gap-6"><input type="date" class="input" id="fit-match-date" value="${f.nextMatch || ''}"><button class="btn btn-secondary btn-sm" id="fit-match-save">Guardar</button>${f.nextMatch ? `<button class="btn btn-ghost btn-sm" id="fit-match-clear">Quitar</button>` : ''}</div>
+    <div class="muted text-xs" style="margin-top:6px">Marcá cuándo jugás: te ajusto los avisos en el Resumen (carbos e hidratación el día del partido, no piernas pesadas el día antes).</div></div>`;
   const mainRows = day.exercises.map(renderEx).join('');
   const core = coreForDay(gymDayIndex);
   const coreRows = `<div class="fit-section-h">🎾 Core / rotación (tenis y pádel)</div>` + core.map((ex, idx) => renderEx(ex, day.exercises.length + idx)).join('');
@@ -855,7 +923,7 @@ function bodyGym() {
     const txt = sets.map(s => `${num(s.weight) ? s.weight : '–'}×${(s.reps != null && s.reps !== '') ? s.reps : '–'}`).join('  ');
     return `<div class="fit-log-ex"><span class="fit-log-exn">${escapeHtml(e.name.split(' (')[0])}</span> <strong>${sets.length} ser</strong> <span class="muted">${escapeHtml(txt)}</span></div>`;
   }).join('')}</div></div>`).join('') : '<div class="muted text-xs">Todavía no registraste sesiones.</div>';
-  return head + warmup + log + `<div class="card"><div class="card-title">Sesiones recientes</div><div class="fit-logs">${hist}</div></div>` + mobility;
+  return head + matchSetter + warmup + log + `<div class="card"><div class="card-title">Sesiones recientes</div><div class="fit-logs">${hist}</div></div>` + mobility;
 }
 
 function bodyReportes() {
@@ -1071,6 +1139,8 @@ function wire(root) {
 
   // Gym
   all('[data-gymday]').forEach(b => b.addEventListener('click', () => { gymDayIndex = +b.dataset.gymday; renderFitness(root); }));
+  $('#fit-match-save')?.addEventListener('click', () => { const v = $('#fit-match-date')?.value; if (v) mutate(s => { s.fitness.nextMatch = v; }); });
+  $('#fit-match-clear')?.addEventListener('click', () => mutate(s => { delete s.fitness.nextMatch; }));
   all('[data-how]').forEach(b => b.addEventListener('click', () => { const key = b.dataset.how; if (expandedEx.has(key)) expandedEx.delete(key); else expandedEx.add(key); renderFitness(root); }));
   // + serie: agrega una fila al DOM sin re-render (preserva lo ya tipeado)
   all('[data-addset]').forEach(b => b.addEventListener('click', () => {
