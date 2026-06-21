@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0c0d10">
+<title>Cuerpo · zonas cargadas</title>
+<style>
+  :root{
+    --bg:#0c0d10;--s1:#131418;--s2:#1a1c22;--s3:#22252d;--border:#232730;--border2:#2e333e;
+    --text:#e8e9ed;--text2:#b1b4be;--text3:#797d88;--accent:#f0b952;
+    --l1:rgba(240,185,82,.55);--l2:rgba(224,148,84,.78);--l3:rgba(226,107,107,.88);--l0:rgba(255,255,255,.05);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:16px 14px 40px;max-width:560px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 2px}
+  .sub{color:var(--text3);font-size:12.5px;margin-bottom:14px}
+  .datebar{display:flex;align-items:center;justify-content:center;gap:14px;margin:8px 0 16px}
+  .datebar button{background:var(--s2);border:1px solid var(--border);color:var(--text2);font-size:18px;width:38px;height:38px;border-radius:10px}
+  .datebar .d{font-size:14px;font-weight:600;min-width:130px;text-align:center}
+  .card{background:var(--s1);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:14px}
+  .maps{display:flex;gap:10px;justify-content:center}
+  .mapcol{flex:1;text-align:center}
+  .cap{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--text3);margin-bottom:4px}
+  svg.body{width:100%;height:auto;touch-action:manipulation}
+  .zone{cursor:pointer}
+  .zlbl{fill:var(--text);font-size:6px;font-family:monospace;text-anchor:middle;pointer-events:none;opacity:.6;font-weight:700}
+  .legend{display:flex;gap:14px;justify-content:center;margin-top:12px;font-size:12px;color:var(--text3)}
+  .legend i{display:inline-block;width:13px;height:13px;border-radius:4px;margin-right:5px;vertical-align:middle}
+  .title{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text3);margin-bottom:10px}
+  .sore{padding:11px 0;border-bottom:1px solid var(--border)}
+  .sore:last-child{border-bottom:none}
+  .sore-name{font-size:14px;margin-bottom:3px}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px;vertical-align:middle}
+  .sore-tip{font-size:13px;color:var(--text2);line-height:1.45}
+  .empty{color:var(--text3);font-size:13px}
+  .btn{display:inline-block;background:var(--s2);border:1px solid var(--border2);color:var(--text2);font-size:13px;font-weight:600;padding:9px 14px;border-radius:9px;margin-top:12px}
+  .foot{color:var(--text3);font-size:11px;text-align:center;margin-top:18px;line-height:1.5}
+</style>
+</head>
+<body>
+  <h1>¿Qué sentís cargado?</h1>
+  <div class="sub">Tocá una zona para marcar la intensidad. <b>D</b> = tu lado derecho · <b>I</b> = izquierdo. Se guarda en este teléfono.</div>
+
+  <div class="datebar">
+    <button id="prev">‹</button>
+    <div class="d" id="dlabel">Hoy</div>
+    <button id="next">›</button>
+  </div>
+
+  <div class="card">
+    <div class="maps">
+      <div class="mapcol"><div class="cap">Frente</div><div id="front"></div></div>
+      <div class="mapcol"><div class="cap">Espalda</div><div id="back"></div></div>
+    </div>
+    <div class="legend"><span><i style="background:var(--l1)"></i>leve</span><span><i style="background:var(--l2)"></i>moderada</span><span><i style="background:var(--l3)"></i>fuerte</span></div>
+  </div>
+
+  <div class="card">
+    <div class="title">Zonas marcadas y qué hacer</div>
+    <div id="summary"><div class="empty">Sin zonas marcadas todavía.</div></div>
+    <button class="btn" id="clear">Limpiar día</button>
+  </div>
+
+  <div class="foot">Local-first · tus datos no salen del teléfono.<br>Tip: en iPhone, Compartir → "Agregar a inicio" para usarlo como app.</div>
+
+<script>
+const COLORS=['rgba(255,255,255,.05)','rgba(240,185,82,.55)','rgba(224,148,84,.78)','rgba(226,107,107,.88)'];
+const lbl=(x,y,t)=>`<text x="${x}" y="${y+2}" class="zlbl">${t}</text>`;
+const SIL=`<g fill="#1a1c22" stroke="#2e333e" stroke-width="1.2"><circle cx="70" cy="22" r="11"/><rect x="52" y="40" width="36" height="66" rx="12"/><rect x="28" y="44" width="14" height="58" rx="7"/><rect x="98" y="44" width="14" height="58" rx="7"/><rect x="50" y="104" width="16" height="74" rx="8"/><rect x="74" y="104" width="16" height="74" rx="8"/></g>`;
+const FRONT=[
+  ['hombros_der',f=>`<ellipse cx="50" cy="50" rx="12" ry="8" fill="${f}"/>`+lbl(50,50,'D')],
+  ['hombros_izq',f=>`<ellipse cx="90" cy="50" rx="12" ry="8" fill="${f}"/>`+lbl(90,50,'I')],
+  ['pecho',f=>`<rect x="55" y="54" width="30" height="22" rx="6" fill="${f}"/>`],
+  ['biceps_der',f=>`<ellipse cx="39" cy="72" rx="8" ry="14" fill="${f}"/>`+lbl(39,72,'D')],
+  ['biceps_izq',f=>`<ellipse cx="101" cy="72" rx="8" ry="14" fill="${f}"/>`+lbl(101,72,'I')],
+  ['abdominales',f=>`<rect x="58" y="78" width="24" height="26" rx="5" fill="${f}"/>`],
+  ['antebrazos_der',f=>`<ellipse cx="31" cy="98" rx="7" ry="15" fill="${f}"/>`+lbl(31,98,'D')],
+  ['antebrazos_izq',f=>`<ellipse cx="109" cy="98" rx="7" ry="15" fill="${f}"/>`+lbl(109,98,'I')],
+  ['cuadriceps_der',f=>`<rect x="51" y="108" width="15" height="38" rx="6" fill="${f}"/>`+lbl(58,128,'D')],
+  ['cuadriceps_izq',f=>`<rect x="74" y="108" width="15" height="38" rx="6" fill="${f}"/>`+lbl(82,128,'I')],
+];
+const BACK=[
+  ['trapecios',f=>`<ellipse cx="70" cy="46" rx="16" ry="8" fill="${f}"/>`],
+  ['espalda',f=>`<rect x="54" y="54" width="32" height="24" rx="6" fill="${f}"/>`],
+  ['triceps_izq',f=>`<ellipse cx="39" cy="72" rx="8" ry="14" fill="${f}"/>`+lbl(39,72,'I')],
+  ['triceps_der',f=>`<ellipse cx="101" cy="72" rx="8" ry="14" fill="${f}"/>`+lbl(101,72,'D')],
+  ['lumbares',f=>`<rect x="60" y="80" width="20" height="16" rx="4" fill="${f}"/>`],
+  ['gluteos_izq',f=>`<ellipse cx="62" cy="102" rx="10" ry="8" fill="${f}"/>`+lbl(62,102,'I')],
+  ['gluteos_der',f=>`<ellipse cx="78" cy="102" rx="10" ry="8" fill="${f}"/>`+lbl(78,102,'D')],
+  ['isquios_izq',f=>`<rect x="51" y="112" width="15" height="30" rx="6" fill="${f}"/>`+lbl(58,128,'I')],
+  ['isquios_der',f=>`<rect x="74" y="112" width="15" height="30" rx="6" fill="${f}"/>`+lbl(82,128,'D')],
+  ['gemelos_izq',f=>`<rect x="52" y="150" width="13" height="26" rx="5" fill="${f}"/>`+lbl(59,164,'I')],
+  ['gemelos_der',f=>`<rect x="75" y="150" width="13" height="26" rx="5" fill="${f}"/>`+lbl(82,164,'D')],
+];
+const LABEL={hombros_der:'Hombro derecho',hombros_izq:'Hombro izquierdo',pecho:'Pecho',biceps_der:'Bíceps derecho',biceps_izq:'Bíceps izquierdo',abdominales:'Abdominales',antebrazos_der:'Antebrazo derecho',antebrazos_izq:'Antebrazo izquierdo',cuadriceps_der:'Cuádriceps derecho',cuadriceps_izq:'Cuádriceps izquierdo',trapecios:'Trapecios',espalda:'Espalda',triceps_der:'Tríceps derecho',triceps_izq:'Tríceps izquierdo',lumbares:'Lumbares',gluteos_der:'Glúteo derecho',gluteos_izq:'Glúteo izquierdo',isquios_der:'Isquio derecho',isquios_izq:'Isquio izquierdo',gemelos_der:'Gemelo derecho',gemelos_izq:'Gemelo izquierdo'};
+const TIPS={lumbares:'Lumbar cargada: evitá peso muerto/sentadilla pesada hoy. Gato-camello, rodillas al pecho y movilidad de cadera. Si el dolor es agudo o irradia a la pierna, frená.',isquios:'Isquios cargados: estiramiento suave y caminata; evitá rumano pesado hasta que aflojen.',cuadriceps:'Cuádriceps cargados: foam roll + caminata ligera; ojo antes de un partido de tenis.',gemelos:'Gemelos cargados: estirá contra la pared y movilidad de tobillo; importan para frenar y arrancar en la cancha.',hombros:'Hombro cargado: face pulls y movilidad; evitá press pesado por encima de la cabeza. Si es el de tu derecha de tenis, cuidalo extra.',pecho:'Pecho cargado: estiramiento en el marco de la puerta; bajá volumen de empuje si sigue.',espalda:'Espalda cargada: colgarte de la barra para descomprimir + movilidad torácica.',gluteos:'Glúteo cargado: estiramiento figura-4 y caminata suave.',trapecios:'Trapecios cargados: aflojá cuello/hombros con movilidad suave y respiración.',biceps:'Bíceps cargado: estiramiento suave; no fuerces jalones pesados hoy.',triceps:'Tríceps cargado: estiramiento por encima de la cabeza; cuidá los empujes.',antebrazos:'Antebrazo cargado: clave para el tenis (codo de tenista). Estirá muñeca/antebrazo, masajeá suave y evitá agarres intensos; si es tu mano dominante, no fuerces.',abdominales:'Core cargado: movilidad liviana; se recupera rápido.'};
+const base=r=>r.replace(/_(der|izq)$/,'');
+const LVL=['','leve','moderada','fuerte'];
+
+const KEY='cuerpo_v1';
+let data=JSON.parse(localStorage.getItem(KEY)||'{}');
+let cur=todayKey();
+function todayKey(d=new Date()){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function save(){localStorage.setItem(KEY,JSON.stringify(data));}
+function dayObj(){return data[cur]||(data[cur]={});}
+function buildMap(view){const list=view==='front'?FRONT:BACK;const sore=data[cur]||{};const zones=list.map(([r,fn])=>`<g class="zone" data-region="${r}">${fn(COLORS[sore[r]||0])}</g>`).join('');return `<svg class="body" viewBox="0 0 140 190">${SIL}${zones}</svg>`;}
+function render(){
+  document.getElementById('front').innerHTML=buildMap('front');
+  document.getElementById('back').innerHTML=buildMap('back');
+  const dl=document.getElementById('dlabel');
+  dl.textContent = cur===todayKey() ? 'Hoy' : cur.split('-').reverse().slice(0,2).join('/');
+  const sore=data[cur]||{};const active=Object.keys(sore).filter(r=>sore[r]>0);
+  const sum=document.getElementById('summary');
+  if(!active.length){sum.innerHTML='<div class="empty">Sin zonas marcadas. Tocá donde sientas carga y te digo qué hacer.</div>';}
+  else{sum.innerHTML=active.map(r=>`<div class="sore"><div class="sore-name"><span class="dot" style="background:${COLORS[sore[r]]}"></span>${LABEL[r]||r} <span style="color:var(--text3);font-size:12px">(${LVL[sore[r]]})</span></div><div class="sore-tip">${TIPS[base(r)]||'Estiramiento suave, movilidad y caminata. Si duele de forma aguda, no lo entrenes hoy.'}</div></div>`).join('');}
+  document.querySelectorAll('.zone').forEach(g=>g.addEventListener('click',()=>{const r=g.dataset.region;const o=dayObj();const nx=((o[r]||0)+1)%4;if(nx===0)delete o[r];else o[r]=nx;save();render();}));
+}
+document.getElementById('clear').addEventListener('click',()=>{data[cur]={};save();render();});
+document.getElementById('prev').addEventListener('click',()=>{const d=new Date(cur);d.setDate(d.getDate()-1);cur=todayKey(d);render();});
+document.getElementById('next').addEventListener('click',()=>{const d=new Date(cur);d.setDate(d.getDate()+1);const t=todayKey();const k=todayKey(d);cur=k>t?t:k;render();});
+render();
+</script>
+</body>
+</html>

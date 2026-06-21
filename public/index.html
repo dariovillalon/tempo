@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tempo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+
+<div id="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">T</div>
+      <div>
+        <div class="brand-name">Tempo</div>
+        <div class="brand-tag">v2.0</div>
+      </div>
+    </div>
+
+    <div class="nav-section">
+      <button class="nav-btn" data-route="today">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
+        Hoy
+      </button>
+      <button class="nav-btn" data-route="dashboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+        Dashboard
+      </button>
+      <button class="nav-btn" data-route="calendar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        Calendario
+      </button>
+      <button class="nav-btn" data-route="board">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="18"/><rect x="14" y="3" width="7" height="11"/></svg>
+        Board
+        <span class="badge" id="nav-board-count">0</span>
+      </button>
+      <button class="nav-btn" data-route="whiteboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="14" rx="2"/><line x1="3" y1="21" x2="21" y2="21"/><line x1="8" y1="17" x2="8" y2="21"/><line x1="16" y1="17" x2="16" y2="21"/></svg>
+        Pizarra
+      </button>
+      <button class="nav-btn" data-route="pomodoro">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M9 2h6"/><path d="M19 5l-1 1"/></svg>
+        Pomodoro
+      </button>
+      <button class="nav-btn" data-route="notes">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>
+        Notas
+      </button>
+      <button class="nav-btn" data-route="btcAlerts">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.767 19.089c4.924.868 6.14-6.025 1.216-6.894m-1.216 6.894L5.86 18.047m5.908 1.042-.347 1.97m1.563-8.864c4.924.869 6.14-6.025 1.215-6.893m-1.215 6.893-3.94-.694m5.155-6.2L8.29 4.26m5.908 1.042.348-1.97M7.48 20.364l3.126-17.727"/></svg>
+        BTC Alerts
+      </button>
+      <button class="nav-btn" data-route="fitness">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        Fitness
+      </button>
+      <button class="nav-btn" data-route="mytime">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+        Mi tiempo
+      </button>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-label">
+        <span>Proyectos</span>
+        <button class="nav-label-add" id="add-project-btn" title="Nuevo proyecto">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+      </div>
+      <div class="projects-list" id="projects-list"></div>
+    </div>
+
+    <div class="sidebar-footer">
+      <button class="nav-btn" data-route="settings" style="margin-bottom:6px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Ajustes
+      </button>
+      <button class="quick-capture-btn" id="quick-capture-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <span>Captura rápida</span>
+        <kbd>⌘K</kbd>
+      </button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menú">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+      <div class="view-title" id="view-title">Hoy</div>
+      <div class="topbar-spacer"></div>
+      <button class="topbar-icon-btn" id="vault-refresh-btn" title="Sincronizar tareas desde Obsidian (lee tasks/ de cada proyecto)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+      </button>
+      <div class="save-indicator" id="save-indicator" title="Estado">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+      </div>
+      <div class="date-pill" id="date-pill">—</div>
+      <div class="pom-mini" id="pom-mini" data-route="pomodoro">
+        <svg viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="10" stroke="var(--surface-3)" stroke-width="2.5"/>
+          <circle id="pom-mini-progress" cx="12" cy="12" r="10" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="62.83" stroke-dashoffset="0" transform="rotate(-90 12 12)"/>
+        </svg>
+        <div>
+          <div class="pom-mini-time" id="pom-mini-time">25:00</div>
+          <div class="pom-mini-label" id="pom-mini-label">Foco</div>
+        </div>
+      </div>
+    </header>
+
+    <div class="view-content" id="view-content">
+      <!-- Views are rendered here by router -->
+    </div>
+  </main>
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+</div>
+
+<!-- Quick Capture (Cmd+K) -->
+<div class="qc-backdrop" id="qc-backdrop">
+  <div class="qc-panel">
+    <div class="qc-input-wrap">
+      <svg class="qc-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="text" id="qc-input" class="qc-input" placeholder="Captura rápida — escribí una tarea, /board, /hoy, /calendar...">
+      <kbd>esc</kbd>
+    </div>
+    <div class="qc-hints" id="qc-hints"></div>
+  </div>
+</div>
+
+<!-- Modals -->
+<div class="modal-backdrop" id="modal-block">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="block-modal-title">Nuevo bloque</div>
+      <button class="modal-close" data-close-modal>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label>Título</label>
+        <input type="text" class="input" id="block-title" placeholder="¿En qué trabajaste?">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Inicio</label>
+          <input type="time" class="input" id="block-start">
+        </div>
+        <div class="field">
+          <label>Fin</label>
+          <input type="time" class="input" id="block-end">
+        </div>
+      </div>
+      <div class="field">
+        <label>Proyecto</label>
+        <select class="select" id="block-project"></select>
+      </div>
+      <div class="field">
+        <label>Notas (opcional)</label>
+        <textarea class="textarea" id="block-notes" placeholder="Detalles, links, contexto..."></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" id="block-delete" style="margin-right:auto;display:none">Eliminar</button>
+      <button class="btn btn-ghost" data-close-modal>Cancelar</button>
+      <button class="btn btn-primary" id="block-save">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-task">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="task-modal-title">Nueva tarea</div>
+      <button class="modal-close" data-close-modal>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label>Tarea</label>
+        <textarea class="textarea" id="task-text" placeholder="¿Qué tenés que hacer?"></textarea>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Estado</label>
+          <select class="select" id="task-state"></select>
+        </div>
+        <div class="field">
+          <label>Proyecto</label>
+          <select class="select" id="task-project"></select>
+        </div>
+      </div>
+      <div class="field" id="task-subproject-field" style="display:none">
+        <label>Subproyecto</label>
+        <select class="select" id="task-subproject"></select>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Pomodoros estimados</label>
+          <input type="number" class="input" id="task-pomodoros" min="0" max="20" placeholder="0">
+        </div>
+        <div class="field">
+          <label>Prioridad</label>
+          <select class="select" id="task-priority">
+            <option value="low">Baja</option>
+            <option value="med" selected>Media</option>
+            <option value="high">Alta</option>
+          </select>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Vence</label>
+          <input type="date" class="input" id="task-due">
+        </div>
+        <div class="field">
+          <label>Seguimiento</label>
+          <input type="date" class="input" id="task-followup" title="Cuando volver a chequear esta tarea">
+        </div>
+      </div>
+      <div class="field">
+        <label>Asignado a</label>
+        <select class="select" id="task-assignee"></select>
+      </div>
+      <div class="field">
+        <label>Recurrencia <span style="text-transform:none;font-weight:400;color:var(--text-3);font-size:10px">— al marcar hecha, se crea la próxima</span></label>
+        <select class="select" id="task-recurrence">
+          <option value="">Sin recurrencia</option>
+          <option value="daily">Cada día</option>
+          <option value="weekdays">Días hábiles (lun–vie)</option>
+          <option value="weekly:MO">Semanal · lunes</option>
+          <option value="weekly:TU">Semanal · martes</option>
+          <option value="weekly:WE">Semanal · miércoles</option>
+          <option value="weekly:TH">Semanal · jueves</option>
+          <option value="weekly:FR">Semanal · viernes</option>
+          <option value="weekly:MO,WE,FR">Lun · Mié · Vie</option>
+          <option value="weekly:TU,TH">Mar · Jue</option>
+          <option value="monthly:1">Mensual · día 1</option>
+          <option value="monthly:15">Mensual · día 15</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Tags <span style="text-transform:none;font-weight:400;color:var(--text-3);font-size:10px">— separados por coma o espacio (sin #)</span></label>
+        <input type="text" class="input" id="task-tags" placeholder="bug, frontend, urgente">
+      </div>
+      <div class="field">
+        <label>Notas</label>
+        <textarea class="textarea" id="task-notes" placeholder="Contexto, links, ideas..." style="min-height:80px"></textarea>
+      </div>
+      <div class="field">
+        <label>Subtareas <span style="text-transform:none;font-weight:400;color:var(--text-3);font-size:10px" id="task-subs-count"></span></label>
+        <div id="task-subs-list" class="task-subs"></div>
+        <div class="row gap-6" style="margin-top:6px">
+          <input type="text" class="input" id="task-sub-new" placeholder="+ Nueva subtarea (Enter)" style="flex:1">
+        </div>
+      </div>
+      <div class="field" id="task-comments-field" style="display:none">
+        <label>Comentarios <span style="text-transform:none;font-weight:400;color:var(--text-3);font-size:10px" id="task-comments-count"></span></label>
+        <div id="task-comments-list" class="task-comments"></div>
+        <div class="row gap-6" style="align-items:stretch">
+          <textarea class="textarea" id="task-comment-new" placeholder="Agregar comentario… (⌘+Enter para enviar)" style="min-height:48px;flex:1"></textarea>
+          <button class="btn btn-primary btn-sm" id="task-comment-add" style="align-self:flex-end">+ Comentar</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" id="task-delete" style="margin-right:auto;display:none">Eliminar</button>
+      <button class="btn btn-ghost" id="task-clone" style="display:none" title="Crear una copia de esta tarea">⎘ Duplicar</button>
+      <button class="btn btn-secondary" id="task-start-pomo" style="display:none" title="Inicia pomodoro y attribuye tiempo a esta tarea">🍅 Iniciar pomodoro</button>
+      <button class="btn btn-ghost" data-close-modal>Cancelar</button>
+      <button class="btn btn-primary" id="task-save">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-project">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title" id="project-modal-title">Nuevo proyecto</div>
+      <button class="modal-close" data-close-modal>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label>Nombre</label>
+        <input type="text" class="input" id="project-name" placeholder="Ej: Cliente X">
+      </div>
+      <div class="field">
+        <label>Descripción</label>
+        <textarea class="textarea" id="project-description" placeholder="¿De qué trata?"></textarea>
+      </div>
+      <div class="field">
+        <label>Objetivo principal</label>
+        <input type="text" class="input" id="project-goal" placeholder="¿Cuál es la meta?">
+      </div>
+      <div class="field">
+        <label>Recursos <span style="text-transform:none;font-weight:400;color:var(--text-3);font-size:10px">— uno por línea. Formato: <code>https://url</code> o <code>[Etiqueta](https://url)</code></span></label>
+        <textarea class="textarea" id="project-resources" placeholder="https://github.com/usuario/repo
+[Diseño](https://figma.com/...)" style="min-height:70px;font-family:var(--font-mono);font-size:12px"></textarea>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Estado</label>
+          <select class="select" id="project-status">
+            <option value="active">Activo</option>
+            <option value="paused">Pausado</option>
+            <option value="done">Terminado</option>
+            <option value="archived">Archivado</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Salud</label>
+          <select class="select" id="project-health">
+            <option value="on-track">En curso</option>
+            <option value="at-risk">En riesgo</option>
+            <option value="blocked">Bloqueado</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label>Color</label>
+        <div class="color-swatches" id="project-swatches"></div>
+      </div>
+      <div class="field">
+        <label>Proyecto padre (opcional)</label>
+        <select class="select" id="project-parent">
+          <option value="">— Ninguno (proyecto raíz) —</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Carpeta de Obsidian</label>
+        <div class="vault-folder-row">
+          <input type="text" class="input" id="project-vault-folder" placeholder="ej: Projects/MiProyecto" readonly>
+          <button class="btn btn-secondary btn-sm" type="button" id="project-vault-pick">Elegir</button>
+          <button class="btn btn-ghost btn-sm" type="button" id="project-vault-clear" style="display:none">Quitar</button>
+        </div>
+        <div class="text-xs muted" style="margin-top:6px">
+          Vinculá una carpeta para sincronizar tareas y notas con Obsidian.
+        </div>
+        <button class="btn btn-secondary btn-sm" type="button" id="project-vault-sync" style="margin-top:8px;display:none">↗ Sincronizar tareas a Obsidian</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" id="project-delete" style="margin-right:auto;display:none">Eliminar</button>
+      <button class="btn btn-ghost" data-close-modal>Cancelar</button>
+      <button class="btn btn-primary" id="project-save">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Import projects from Obsidian -->
+<div class="modal-backdrop" id="modal-import">
+  <div class="modal modal-xl">
+    <div class="modal-header">
+      <div class="modal-title">Importar proyectos desde Obsidian</div>
+      <button class="modal-close" data-close-modal>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" id="import-modal-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Cancelar</button>
+      <button class="btn btn-primary" id="import-run">Importar seleccionados</button>
+    </div>
+  </div>
+</div>
+
+<!-- Daily / Weekly review -->
+<div class="modal-backdrop" id="modal-review">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title" id="review-modal-title">Cierre del día</div>
+      <button class="modal-close" data-close-modal>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" id="review-modal-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Cancelar</button>
+      <button class="btn btn-primary" id="review-save">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Pick a vault folder (used by project modal) -->
+<div class="modal-backdrop" id="modal-vault-folder">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">Elegí una carpeta del vault</div>
+      <button class="modal-close" data-close-modal>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" id="vault-folder-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Cancelar</button>
+      <button class="btn btn-primary" id="vault-folder-pick" disabled>Usar esta carpeta</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-vault">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">Conectar carpeta de Obsidian</div>
+      <button class="modal-close" data-close-modal>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" id="vault-modal-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close-modal>Cancelar</button>
+      <button class="btn btn-primary" id="vault-connect">Conectar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Focus mode overlay -->
+<div class="focus-overlay" id="focus-overlay">
+  <button class="focus-exit" id="focus-exit" title="Salir (Esc)">✕</button>
+  <div class="focus-stack">
+    <div class="focus-project" id="focus-project"></div>
+    <div class="focus-task" id="focus-task">—</div>
+    <div class="focus-time" id="focus-time">25:00</div>
+    <div class="focus-mode-label" id="focus-mode">Foco</div>
+    <div class="focus-controls">
+      <button class="btn btn-primary pom-btn-big" id="focus-toggle">Pausar</button>
+      <button class="btn btn-ghost pom-btn-big" id="focus-skip">Saltar</button>
+      <button class="btn btn-ghost pom-btn-big" id="focus-done">✓ Marcar hecha</button>
+    </div>
+    <div class="focus-comments">
+      <div class="focus-comments-input">
+        <textarea id="focus-comment-new" class="textarea" rows="2" placeholder="Anotar algo… (⌘/Ctrl+Enter)"></textarea>
+        <button class="btn btn-primary btn-sm" id="focus-comment-add">Guardar</button>
+      </div>
+      <div class="focus-comments-list" id="focus-comments-list"></div>
+    </div>
+    <div class="focus-hint">Esc para salir · ⌥+Tab volves al kanban</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- Menú móvil (inline, independiente de los módulos para que ande aunque el JS esté cacheado) -->
+<script>
+(function () {
+  document.addEventListener('click', function (e) {
+    if (e.target.closest('#sidebar-toggle')) { document.body.classList.toggle('nav-open'); return; }
+    if (e.target.closest('#sidebar-backdrop')) { document.body.classList.remove('nav-open'); return; }
+    if (e.target.closest('.nav-btn[data-route]') || e.target.closest('.project-pill')) { document.body.classList.remove('nav-open'); }
+  });
+}());
+</script>
+
+<!-- App entry point -->
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>

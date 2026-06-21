@@ -1,0 +1,21 @@
+# Tempo data (local user state — should never be committed)
+data/
+# Launcher local con secretos (SMTP / contraseña) — NO subir al repo
+start.command
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Logs
+*.log
