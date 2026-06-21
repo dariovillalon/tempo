@@ -3,7 +3,7 @@
 // con un espacio para ir descubriendo qué te gusta (anti-workaholic).
 
 import { state, mutate } from '../state.js';
-import { todayKey, uid, escapeHtml } from '../utils.js';
+import { todayKey, uid, escapeHtml, addDays } from '../utils.js';
 
 const M = () => state.mytime;
 const dayOf = (k) => M().days[k] || {};
@@ -183,6 +183,35 @@ function suggestions(d) {
   return list.slice(0, 12);
 }
 
+// Balance de la semana: cuántos días te hiciste tiempo y cuántas cosas cumpliste.
+function weekBalance() {
+  const days = M().days || {};
+  let plannedDays = 0, doneCount = 0;
+  for (let i = 0; i < 7; i++) {
+    const rec = days[todayKey(addDays(new Date(), -i))];
+    if (rec && (rec.blocks || []).length) plannedDays++;
+    if (rec) doneCount += (rec.blocks || []).filter(b => b.done).length;
+  }
+  if (!plannedDays && !doneCount) return '';
+  const tip = plannedDays < 2
+    ? 'Esta semana casi no te tomaste tiempo. Elegí una idea de abajo y ponele hora — aunque sea 30 min.'
+    : '💪 Te estás haciendo tiempo para vos. Seguí así.';
+  return `<div class="card"><div class="card-title">Tu semana para vos</div><div class="fit-grid">
+    <div class="fit-tile"><div class="fit-tile-lbl">Días con plan propio</div><div class="fit-tile-val">${plannedDays}<span> / 7</span></div></div>
+    <div class="fit-tile"><div class="fit-tile-lbl">Cosas hechas para vos</div><div class="fit-tile-val">${doneCount}</div></div>
+  </div><div class="mt-balance" style="margin-top:10px">${tip}</div></div>`;
+}
+// Si ya entrenó o está cargado (datos de Fitness), empujar bajo desgaste.
+function recoveryNudge(k) {
+  const ff = state.fitness || {};
+  const fd = (ff.days || {})[k] || {};
+  const trainedToday = (ff.workoutLogs || []).some(l => l.date === k) || (fd.activityLog || []).length > 0;
+  const sore = Object.keys(fd.soreness || {}).length > 0;
+  if (!trainedToday && !sore) return '';
+  const why = sore ? 'venís con zonas cargadas' : 'ya entrenaste hoy';
+  return `<div class="card"><div class="mt-balance">🌊 Como ${why}, hoy te conviene algo de <b>bajo desgaste</b> para recuperar: sauna o spa, caminata suave, nadar tranquilo, yoga o navegar. Tocá "Bajo desgaste" en Ganas y mirá las ideas.</div></div>`;
+}
+
 export function renderMyTime(root) {
   const k = todayKey();
   const d = dayOf(k);
@@ -202,6 +231,7 @@ export function renderMyTime(root) {
   const sugCard = `<div class="card">
     <div class="card-title">Ideas para vos ${vibes.length || en !== 'med' ? '' : '<span class="muted text-xs">— elegí energía y ganas arriba para afinar</span>'}</div>
     <div class="mt-sugs">${sug.map(a => `<div class="mt-sug"><div class="mt-sug-main"><span class="mt-sug-emoji">${a.emoji}</span><div><div class="mt-sug-label">${escapeHtml(a.label)}</div><div class="mt-sug-meta">${escapeHtml(a.cat)} · ~${a.mins} min</div></div></div><button class="btn btn-ghost btn-sm" data-add="${a.id}">+ Al plan</button></div>`).join('')}</div>
+    <button class="btn btn-secondary btn-sm" id="mt-surprise" style="margin-top:10px">🎲 Sorprendeme (elegí por mí)</button>
   </div>`;
 
   const blocks = [...(d.blocks || [])].sort((a, b) => (a.time || '99') < (b.time || '99') ? -1 : 1);
@@ -226,7 +256,7 @@ export function renderMyTime(root) {
 
   root.innerHTML = `<div class="fit">
     <div class="fit-head"><div><div class="fit-title">Mi tiempo</div><div class="muted text-xs">Tu tiempo personal, fuera del trabajo</div></div></div>
-    ${intro}${mood}${sugCard}${planCard}${journalCard}
+    ${intro}${recoveryNudge(k)}${weekBalance()}${mood}${sugCard}${planCard}${journalCard}
   </div>`;
 
   // wiring
@@ -238,6 +268,7 @@ export function renderMyTime(root) {
   all('[data-btime]').forEach(i => i.addEventListener('change', () => setBlockTime(k, i.dataset.btime, i.value)));
   all('[data-bdone]').forEach(c => c.addEventListener('change', () => toggleBlock(k, c.dataset.bdone)));
   all('[data-bdel]').forEach(b => b.addEventListener('click', () => removeBlock(k, b.dataset.bdel)));
+  $('#mt-surprise')?.addEventListener('click', () => { if (sug.length) addBlock(k, sug[Math.floor(Math.random() * sug.length)]); });
   $('#mt-add')?.addEventListener('click', () => { addManual(k, $('#mt-label').value.trim(), $('#mt-time').value); });
   $('#mt-journal')?.addEventListener('change', (e) => setJournal(k, e.target.value));
 }

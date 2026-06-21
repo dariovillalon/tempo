@@ -12,6 +12,7 @@ let reportDays = 30;
 let bodyView = 'front';
 let showFoodForm = false;
 let actIntensity = 'moderado';    // intensidad seleccionada para registrar actividad
+let editPlan = false;             // modo edición del plan de gym
 const expandedEx = new Set();     // ejercicios con "cómo se hace" abierto
 const expandedHabits = new Set(); // hábitos con sub-items abiertos
 
@@ -885,7 +886,25 @@ const MOBILITY_ROUTINE = [
 function bodyGym() {
   const f = F(), plan = f.plan || defaultFitnessPlan(), day = plan.days[gymDayIndex] || plan.days[0];
   const head = `<div class="card"><div class="card-title">${escapeHtml(plan.name)}</div><div class="muted text-xs">${escapeHtml(plan.note)}</div>
-      <div class="fit-day-tabs">${plan.days.map((dd, i) => `<button class="fit-day-tab ${i === gymDayIndex ? 'active' : ''}" data-gymday="${i}">${escapeHtml(dd.name.split(' · ')[0])}</button>`).join('')}</div></div>`;
+      <div class="fit-day-tabs">${plan.days.map((dd, i) => `<button class="fit-day-tab ${i === gymDayIndex ? 'active' : ''}" data-gymday="${i}">${escapeHtml(dd.name.split(' · ')[0])}</button>`).join('')}</div>
+      <button class="btn btn-ghost btn-sm" id="fit-plan-edit" style="margin-top:8px">${editPlan ? '← Volver al registro' : '✏️ Editar plan'}</button></div>`;
+  // Modo edición: editar nombre del día, ejercicios, series y reps.
+  if (editPlan) {
+    const editor = `<div class="card"><div class="card-title">✏️ Editar plan — día actual</div>
+      <label class="muted text-xs">Nombre del día</label>
+      <input class="input" id="ep-dayname" value="${escapeHtml(day.name)}" style="margin:4px 0 12px">
+      <div class="muted text-xs" style="margin-bottom:6px">Ejercicio · series · reps</div>
+      ${day.exercises.map((ex, i) => `<div class="ep-row" data-ei="${i}">
+          <input class="input ep-name" value="${escapeHtml(ex.name)}" placeholder="Ejercicio">
+          <input class="input ep-sets" type="number" inputmode="numeric" value="${ex.sets || 3}" title="series">
+          <input class="input ep-reps" value="${escapeHtml(String(ex.reps || ''))}" placeholder="reps" title="reps">
+          <button class="btn btn-ghost btn-sm" data-ep-del="${i}" title="Quitar">✕</button>
+        </div>`).join('')}
+      <button class="btn btn-secondary btn-sm" id="ep-add" style="margin-top:10px">+ Agregar ejercicio</button>
+      <div class="row gap-6" style="margin-top:16px"><button class="btn btn-primary btn-sm" id="ep-save">Guardar plan</button><button class="btn btn-ghost btn-sm" id="ep-cancel">Cancelar</button></div>
+      <div class="muted text-xs" style="margin-top:8px">Editás el día seleccionado arriba. Cambiá de día con los botones para editar otro.</div></div>`;
+    return head + editor;
+  }
   const renderEx = (ex, i) => {
     const last = lastWeightFor(ex.name), exKey = gymDayIndex + ':' + i, open = expandedEx.has(exKey);
     const ls = lastSessionFor(ex.name);
@@ -1073,8 +1092,41 @@ const lastSessionFor = (exName) => {
   return null;
 };
 
-const TABS = [['resumen', 'Resumen'], ['dieta', 'Dieta'], ['comidas', 'Comidas'], ['bienestar', 'Bienestar'], ['cuerpo', 'Cuerpo'], ['peso', 'Peso'], ['gym', 'Gym'], ['reportes', 'Reportes'], ['perfil', 'Perfil']];
-const bodyFor = (id) => ({ resumen: bodyResumen, dieta: bodyDieta, bienestar: bodyBienestar, cuerpo: bodyCuerpo, comidas: bodyComidas, peso: bodyPeso, gym: bodyGym, reportes: bodyReportes, perfil: bodyPerfil }[id] || bodyResumen)();
+// Plan semanal de comidas + lista de compras, según el objetivo del perfil.
+function bodyPlan() {
+  const f = F(), t = targets(f.profile);
+  if (!t) return '<div class="card"><div class="muted">Completá tu perfil (peso, altura, edad) para armar tu plan.</div><button class="btn btn-primary btn-sm" id="fit-go-perfil" style="margin-top:10px">Ir a Perfil</button></div>';
+  const meal = (name, k, p) => `<div class="fit-move"><div class="fit-move-n">${escapeHtml(name)}</div><div class="fit-move-cue">~${k} kcal · ${p} g proteína</div></div>`;
+  const dayMeals = [
+    ['🍳 Desayuno — 3 huevos + 2 tostadas integrales + palta + fruta', 550, 28],
+    ['🥣 Media mañana — yogur griego + avena + banana + maní', 520, 30],
+    ['🍗 Almuerzo — pollo o carne magra (200 g) + arroz o papa + ensalada', 650, 50],
+    ['🥤 Pre-gym (días de gym) — batido whey + banana + leche', 350, 35],
+    ['🐟 Cena — pescado o carne (180 g) + boniato + verduras', 600, 42],
+  ];
+  const totK = dayMeals.reduce((a, m) => a + m[1], 0), totP = dayMeals.reduce((a, m) => a + m[2], 0);
+  const plan = `<div class="card"><div class="card-title">Día tipo (≈ tu objetivo)</div>
+    <div class="muted text-xs" style="margin-bottom:8px">Tu objetivo: ~${t.target} kcal · ${t.protein} g proteína. Este día suma ~${totK} kcal y ${totP} g. Los días sin gym, sacá el batido pre-gym (~−350 kcal).</div>
+    ${dayMeals.map(m => meal(m[0], m[1], m[2])).join('')}</div>`;
+  const swaps = `<div class="card"><div class="card-title">Cómo variar (mismo aporte)</div>
+    <div class="fit-move"><div class="fit-move-n">Proteínas</div><div class="fit-move-cue">Pollo · carne magra · pescado · atún · huevos · yogur griego · whey. Rotá para no aburrirte.</div></div>
+    <div class="fit-move"><div class="fit-move-n">Carbohidratos</div><div class="fit-move-cue">Arroz · papa/boniato · avena · pasta · pan integral · fruta.</div></div>
+    <div class="fit-move"><div class="fit-move-n">Grasas</div><div class="fit-move-cue">Palta · maní/almendras · aceite de oliva · huevo entero.</div></div>
+    <div class="fit-move"><div class="fit-move-n">Verduras (a voluntad)</div><div class="fit-move-cue">Hojas verdes · tomate · zanahoria · brócoli · zapallo.</div></div></div>`;
+  const SHOP = [
+    ['Proteínas', 'Huevos (2 docenas) · pechuga de pollo (1.5 kg) · carne magra (1 kg) · pescado o atún (4 latas / 800 g) · yogur griego (1 kg)'],
+    ['Carbohidratos', 'Avena (500 g) · arroz (1 kg) · papa/boniato (2 kg) · pan integral · pasta (500 g) · fruta (bananas, manzanas)'],
+    ['Grasas', 'Palta (3-4) · maní o almendras (250 g) · aceite de oliva'],
+    ['Verduras', 'Hojas verdes (kale/acelga/espinaca) · tomate · zanahoria · brócoli'],
+    ['Suplementos', 'Creatina (5 g/día) · whey (opcional, para cerrar la proteína)'],
+  ];
+  const shop = `<div class="card"><div class="card-title">🛒 Lista de compras (1 semana)</div>
+    ${SHOP.map(s => `<div class="fit-move"><div class="fit-move-n">${escapeHtml(s[0])}</div><div class="fit-move-cue">${escapeHtml(s[1])}</div></div>`).join('')}
+    <div class="muted text-xs" style="margin-top:8px">Cantidades aproximadas para 1 persona en fase de volumen. Ajustá según lo que ya tengas.</div></div>`;
+  return plan + swaps + shop;
+}
+const TABS = [['resumen', 'Resumen'], ['dieta', 'Dieta'], ['plan', 'Plan'], ['comidas', 'Comidas'], ['bienestar', 'Bienestar'], ['cuerpo', 'Cuerpo'], ['peso', 'Peso'], ['gym', 'Gym'], ['reportes', 'Reportes'], ['perfil', 'Perfil']];
+const bodyFor = (id) => ({ resumen: bodyResumen, dieta: bodyDieta, plan: bodyPlan, bienestar: bodyBienestar, cuerpo: bodyCuerpo, comidas: bodyComidas, peso: bodyPeso, gym: bodyGym, reportes: bodyReportes, perfil: bodyPerfil }[id] || bodyResumen)();
 
 // ---- wiring ----
 function wire(root) {
@@ -1141,6 +1193,27 @@ function wire(root) {
   all('[data-gymday]').forEach(b => b.addEventListener('click', () => { gymDayIndex = +b.dataset.gymday; renderFitness(root); }));
   $('#fit-match-save')?.addEventListener('click', () => { const v = $('#fit-match-date')?.value; if (v) mutate(s => { s.fitness.nextMatch = v; }); });
   $('#fit-match-clear')?.addEventListener('click', () => mutate(s => { delete s.fitness.nextMatch; }));
+  $('#fit-plan-edit')?.addEventListener('click', () => { editPlan = !editPlan; renderFitness(root); });
+  if (editPlan) {
+    const ensure = (s) => { if (!s.fitness.plan) s.fitness.plan = JSON.parse(JSON.stringify(defaultFitnessPlan())); return s.fitness.plan; };
+    const collect = () => {
+      const exs = [];
+      all('.ep-row').forEach(r => {
+        const name = (r.querySelector('.ep-name')?.value || '').trim();
+        if (!name) return;
+        const sets = num(r.querySelector('.ep-sets')?.value, 3) || 3;
+        const reps = (r.querySelector('.ep-reps')?.value || '').trim() || '10';
+        const old = ((F().plan?.days?.[gymDayIndex]?.exercises) || [])[+r.dataset.ei] || {};
+        exs.push({ name, sets, reps, cue: old.cue || '', yt: old.yt || name });
+      });
+      const dn = ($('#ep-dayname')?.value || '').trim();
+      mutate(s => { const d = ensure(s).days[gymDayIndex]; d.exercises = exs; if (dn) d.name = dn; });
+    };
+    $('#ep-add')?.addEventListener('click', () => { collect(); mutate(s => { ensure(s).days[gymDayIndex].exercises.push({ name: 'Nuevo ejercicio', sets: 3, reps: '10', cue: '', yt: '' }); }); renderFitness(root); });
+    all('[data-ep-del]').forEach(b => b.addEventListener('click', () => { collect(); const idx = +b.dataset.epDel; mutate(s => { ensure(s).days[gymDayIndex].exercises.splice(idx, 1); }); renderFitness(root); }));
+    $('#ep-save')?.addEventListener('click', () => { collect(); editPlan = false; renderFitness(root); });
+    $('#ep-cancel')?.addEventListener('click', () => { editPlan = false; renderFitness(root); });
+  }
   all('[data-how]').forEach(b => b.addEventListener('click', () => { const key = b.dataset.how; if (expandedEx.has(key)) expandedEx.delete(key); else expandedEx.add(key); renderFitness(root); }));
   // + serie: agrega una fila al DOM sin re-render (preserva lo ya tipeado)
   all('[data-addset]').forEach(b => b.addEventListener('click', () => {
