@@ -2273,7 +2273,9 @@ if (args[0]) {
   }
 }
 
-server.listen(PORT, '127.0.0.1', () => {
+// En la nube (Render/Railway) hay que escuchar en 0.0.0.0; local sigue en 127.0.0.1.
+const HOST = (process.env.PORT || DATABASE_URL) ? '0.0.0.0' : '127.0.0.1';
+server.listen(PORT, HOST, () => {
   console.log('');
   console.log('  ╭───────────────────────────────────────────╮');
   console.log('  │                                           │');
