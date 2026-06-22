@@ -67,8 +67,10 @@ export const minsToHrs = (mins) => {
 };
 
 export const minsBetween = (start, end) => {
+  if (!start || !end || !start.includes(':') || !end.includes(':')) return 0;
   const [sh, sm] = start.split(':').map(Number);
   const [eh, em] = end.split(':').map(Number);
+  if ([sh, sm, eh, em].some(n => !Number.isFinite(n))) return 0;
   return (eh * 60 + em) - (sh * 60 + sm);
 };
 

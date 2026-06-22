@@ -43,6 +43,8 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
         Fitness
       </button>
+      <button class="nav-more-toggle" id="nav-more-toggle" type="button">Más <span class="nav-more-chev">▾</span></button>
+      <div class="nav-more" id="nav-more">
       <button class="nav-btn" data-route="dashboard">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
         Dashboard
@@ -80,6 +82,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
         Promociones
       </button>
+      </div>
     </div>
 
     <div class="nav-section">
@@ -469,11 +472,25 @@
 <!-- Menú móvil (inline, independiente de los módulos para que ande aunque el JS esté cacheado) -->
 <script>
 (function () {
+  var MORE_KEY = 'tempo.navMore.collapsed';
+  function applyMore() {
+    var sb = document.querySelector('.sidebar');
+    if (!sb) return;
+    // Por defecto plegado (salvo que el usuario lo haya dejado expandido).
+    if (localStorage.getItem(MORE_KEY) !== '0') sb.classList.add('more-collapsed');
+  }
   document.addEventListener('click', function (e) {
     if (e.target.closest('#sidebar-toggle')) { document.body.classList.toggle('nav-open'); return; }
     if (e.target.closest('#sidebar-backdrop')) { document.body.classList.remove('nav-open'); return; }
+    if (e.target.closest('#nav-more-toggle')) {
+      var sb = document.querySelector('.sidebar');
+      var collapsed = sb.classList.toggle('more-collapsed');
+      try { localStorage.setItem(MORE_KEY, collapsed ? '1' : '0'); } catch (_) {}
+      return;
+    }
     if (e.target.closest('.nav-btn[data-route]') || e.target.closest('.project-pill')) { document.body.classList.remove('nav-open'); }
   });
+  applyMore();
 }());
 </script>
 

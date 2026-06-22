@@ -7,6 +7,71 @@ import { router } from '../router.js';
 import { openTaskModal } from '../components/taskModal.js';
 import { openBlockModal } from '../components/blockModal.js';
 import { openReviewModal } from '../components/reviewModal.js';
+import { fitnessTodaySnapshot } from './fitness.js';
+
+// Tips de "La psicología del dinero" (Morgan Housel), uno por capítulo. Rota por día.
+const MONEY_TIPS = [
+  { n: 1, text: 'Nadie está loco: cada uno decide con la plata según su historia. No te juzgues (ni juzgues) tan rápido.' },
+  { n: 2, text: 'Suerte y riesgo: detrás de muchos éxitos y fracasos hay azar. No copies ciegamente ni te castigues por un mal resultado.' },
+  { n: 3, text: 'Nunca es suficiente: si no sabés cuándo parar, ninguna cifra alcanza. Definí tu "suficiente".' },
+  { n: 4, text: 'Interés compuesto: lo que importa no es el rendimiento espectacular, sino uno bueno sostenido por mucho tiempo.' },
+  { n: 5, text: 'Hacerse rico vs. seguir siéndolo: ganar es una cosa, conservar es otra (humildad + frugalidad + algo de paranoia).' },
+  { n: 6, text: 'Cara o cruz: podés equivocarte la mitad de las veces e ir muy bien. Unas pocas decisiones explican casi todo.' },
+  { n: 7, text: 'Libertad: el mayor dividendo del dinero es controlar tu tiempo. Esa es la verdadera riqueza.' },
+  { n: 8, text: 'La paradoja del auto: nadie te admira por tus cosas tanto como creés. Comprás status que casi nadie mira.' },
+  { n: 9, text: 'Riqueza es lo que NO ves: son los autos no comprados y el dinero ahorrado. Lo que mostrás es gasto, no riqueza.' },
+  { n: 10, text: 'Ahorrar: tu tasa de ahorro pesa más que tu ingreso o tu rendimiento. Podés ahorrar sin una razón puntual.' },
+  { n: 11, text: 'Razonable > racional: elegí una estrategia que puedas sostener y con la que duermas, aunque no sea "óptima".' },
+  { n: 12, text: 'Sorpresa: lo más importante suele ser lo que nadie vio venir. Esperá lo inesperado.' },
+  { n: 13, text: 'Margen de error: dejá colchón. El margen de seguridad te deja aguantar para que el largo plazo juegue a favor.' },
+  { n: 14, text: 'Vas a cambiar: tus metas de hoy no son las de mañana. Evitá los extremos y aceptá que vas a cambiar de idea.' },
+  { n: 15, text: 'Nada es gratis: la volatilidad es el precio de los buenos rendimientos. Pagalo como entrada, no como multa.' },
+  { n: 16, text: 'Cuidado con las señales: no copies a quien juega otro juego (otro horizonte y objetivos) distinto al tuyo.' },
+  { n: 17, text: 'El pesimismo seduce: suena más inteligente, pero el optimismo paciente suele pagar mejor.' },
+  { n: 18, text: 'Creés lo que te conviene: ojo con las historias que te contás sobre el dinero.' },
+  { n: 19, text: 'Sé humilde en el éxito y compasivo en el fracaso. Jugá tu propio juego.' },
+  { n: 20, text: 'Simplificá: ahorrá mucho, invertí en algo amplio y barato, y dejá pasar el tiempo.' },
+];
+const dayOfYear = () => { const d = new Date(); return Math.floor((d - new Date(d.getFullYear(), 0, 0)) / 86400000); };
+const dailyMoneyTip = () => MONEY_TIPS[dayOfYear() % MONEY_TIPS.length];
+const ACTIVE_BREAKS = [
+  'Parate, estirá cuello y hombros 1–2 min.',
+  'Caminá 2 min y aprovechá para tomar agua.',
+  'Regla 20-20-20: mirá algo lejano 20 seg y respirá hondo.',
+  'Movilidad: 5 sentadillas + rotaciones de cadera y muñecas.',
+  'Levantate, soltá la espalda y relajá la mandíbula.',
+];
+const activeBreakTip = () => ACTIVE_BREAKS[new Date().getHours() % ACTIVE_BREAKS.length];
+
+// Tablero "Lo que sigue": próxima comida, próximo evento, estado nutrición/agua, pausa activa, recomendación y tip del día.
+const buildNextUp = (tk) => {
+  const snap = fitnessTodaySnapshot();
+  const now = new Date(); const nowHHMM = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const nextEv = state.blocks.filter(b => b.date === tk && b.start && b.start >= nowHHMM).sort((a, b) => a.start < b.start ? -1 : 1)[0];
+  const rows = [];
+  if (snap.hasProfile && snap.nextMeal) {
+    const hh = String(snap.nextMeal.hour).padStart(2, '0');
+    rows.push(`<div class="nx-row"><span class="nx-ico">🍽️</span><div><b>Próxima comida:</b> ${escapeHtml(snap.nextMeal.label)} · ~${hh}:00 <span class="muted">(~${snap.nextMeal.kcal} kcal, ${snap.nextMeal.prot} g prot)</span></div></div>`);
+  }
+  if (nextEv) rows.push(`<div class="nx-row"><span class="nx-ico">${nextEv.kind === 'meeting' ? '📅' : '💼'}</span><div><b>Próximo en agenda:</b> ${escapeHtml(nextEv.start)} · ${escapeHtml(nextEv.title || '(sin título)')}</div></div>`);
+  let chips = '';
+  if (snap.hasProfile) {
+    const chip = (lbl, val, goal, unit, ok) => `<span class="nx-chip ${ok ? 'ok' : ''}">${lbl} ${val}/${goal}${unit}</span>`;
+    chips = `<div class="nx-chips">
+      ${chip('🔥', snap.calories, snap.calTarget, '', snap.calories >= snap.calTarget)}
+      ${chip('🥩', snap.protein, snap.protTarget, 'g', snap.protein >= snap.protTarget * 0.95)}
+      ${chip('💧', (snap.water / 1000).toFixed(1), (snap.waterGoal / 1000).toFixed(1), 'L', snap.water >= snap.waterGoal)}
+    </div>`;
+  }
+  const alertsHtml = (snap.alerts || []).map(a => `<div class="fit-alert ${a.level}">${escapeHtml(a.text)}</div>`).join('');
+  const rec = snap.recommendation ? `<div class="nx-row"><span class="nx-ico">💡</span><div><b>Recomendación:</b> ${escapeHtml(snap.recommendation.text)}</div></div>` : '';
+  const breakRow = `<div class="nx-row"><span class="nx-ico">🤸</span><div><b>Pausa activa:</b> ${escapeHtml(activeBreakTip())}</div></div>`;
+  const prompt = !snap.hasProfile ? '<div class="muted text-xs">Completá tu perfil en Fitness para ver comida, proteína y agua acá.</div>' : '';
+  const tip = dailyMoneyTip();
+  const inner = rows.join('') + chips + alertsHtml + breakRow + rec + prompt;
+  return `<div class="card nextup-card"><div class="card-title">Lo que sigue</div>${inner || '<div class="muted text-xs">Nada pendiente ahora mismo. 👌</div>'}</div>
+    <div class="card moneytip-card"><div class="nx-row"><span class="nx-ico">💰</span><div><b>Psicología del dinero · cap. ${tip.n}:</b> ${escapeHtml(tip.text)}</div></div></div>`;
+};
 
 // Cache today's calendar events briefly so URL changes / vault edits are seen quickly.
 let calendarCache = { day: null, events: [], fetchedAt: 0 };
@@ -99,6 +164,8 @@ export const renderToday = (root) => {
           <button class="btn btn-secondary btn-sm" id="close-day-btn" title="Cerrar el día — escribe entry en DailyNotes/">📝 Cerrar día</button>
         </div>
         <div class="today-date">${fmtDate(today, { weekday: true, year: true })}</div>
+
+        ${buildNextUp(tk)}
 
         <div class="today-stats">
           <div class="stat-card">

@@ -1291,6 +1291,31 @@ function wire(root) {
   });
 }
 
+// Resumen del estado de fitness de hoy, para que la pestaña "Hoy" lo muestre sin duplicar lógica.
+export function fitnessTodaySnapshot() {
+  const k = tk(); const t = dayTargets(k); const d = getDay(k);
+  if (!t) return { hasProfile: false };
+  const now = new Date(); const hour = now.getHours() + now.getMinutes() / 60;
+  const frac = Math.min(1, Math.max(0, (hour - 8) / (21 - 8)));
+  const hyd = num(d.waterMl) + caffeineFluidMl(k); const wg = waterGoalFor(k);
+  const alerts = [];
+  const pa = todayPaceAlert(k, t); if (pa) alerts.push(pa);
+  const ga = mealGapAlert(k); if (ga) alerts.push(ga);
+  if (frac > 0.5 && num(d.protein) < t.protein * frac * 0.8) alerts.push({ level: 'warn', text: `Vas bajo en proteína (${num(d.protein)}/${t.protein} g para esta hora). Sumá una fuente proteica pronto.` });
+  if (frac > 0.4 && hyd < wg.goal * frac * 0.7) alerts.push({ level: 'info', text: `Hidratación baja (${(hyd / 1000).toFixed(1)}/${(wg.goal / 1000).toFixed(1)} L). Tomá agua.` });
+  const np = nextMealPlan(k, t);
+  const nextMeal = (np && np.remKcal > 50) ? { label: np.next.label, hour: np.next.hour, kcal: np.perKcal, prot: np.perProt } : null;
+  const recs = recommendations();
+  return {
+    hasProfile: true,
+    calories: num(d.calories), calTarget: t.target,
+    protein: num(d.protein), protTarget: t.protein,
+    water: hyd, waterGoal: wg.goal,
+    alerts, nextMeal,
+    recommendation: (recs && recs.length) ? recs[0] : null,
+  };
+}
+
 export function renderFitness(root) {
   root.innerHTML = `
     <div class="fit">
