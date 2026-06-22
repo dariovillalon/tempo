@@ -10,6 +10,8 @@ import { renderNotes }      from './views/notes.js';
 import { renderBtcAlerts }  from './views/btcAlerts.js';
 import { renderFitness }    from './views/fitness.js';
 import { renderMyTime }     from './views/mytime.js';
+import { renderBills }      from './views/bills.js';
+import { renderPromos }     from './views/promos.js';
 import { renderProject }    from './views/project.js';
 import { renderSettings }   from './views/settings.js';
 import { setLastUsed, state } from './state.js';
@@ -18,7 +20,7 @@ import { expandSidebarProject } from './components/projectModal.js';
 const TITLES = {
   today: 'Hoy',
   dashboard: 'Dashboard',
-  calendar: 'Calendario',
+  calendar: 'Agenda',
   board: 'Board',
   whiteboard: 'Pizarra',
   pomodoro: 'Pomodoro',
@@ -26,6 +28,8 @@ const TITLES = {
   btcAlerts: 'BTC Alerts',
   fitness: 'Fitness',
   mytime: 'Mi tiempo',
+  bills: 'Cuentas',
+  promos: 'Promociones',
   settings: 'Ajustes',
 };
 
@@ -60,6 +64,8 @@ const renderView = (route) => {
     case 'btcAlerts':  renderBtcAlerts(root); break;
     case 'fitness':    renderFitness(root); break;
     case 'mytime':     renderMyTime(root); break;
+    case 'bills':      renderBills(root); break;
+    case 'promos':     renderPromos(root); break;
     case 'project': {
       title = renderProject(root, arg) || 'Proyecto';
       // expand any ancestor in the sidebar so this subproject is visible

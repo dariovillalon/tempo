@@ -14,6 +14,7 @@ let timer = {
   remainingMs: 25 * 60 * 1000,
   totalMs: 25 * 60 * 1000,
   taskId: null,
+  label: null,       // etiqueta libre (ej: un bloque de trabajo sin tarea)
   projectId: null,
   startedAt: null,
   intervalId: null,
@@ -268,6 +269,8 @@ const paint = (root, partial) => {
         <button class="btn btn-ghost pom-btn-big" id="pom-skip">Saltar</button>
       </div>
 
+      ${(timer.label && !timer.taskId) ? `<div class="pom-block-label">💼 Trabajando en: <b>${escapeHtml(timer.label)}</b></div>` : ''}
+
       <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap;justify-content:center">
         <label style="font-size:11px;color:var(--text-3);text-transform:uppercase">Tarea actual</label>
         <select class="select" id="pom-task" style="min-width:280px">
@@ -378,6 +381,20 @@ export const startPomodoroForTask = (taskId) => {
   if (!task) return;
   timer.taskId = task.id;
   timer.projectId = task.projectId || null;
+  timer.label = null;
+  if (!timer.running) {
+    if (timer.mode !== 'focus') setMode('focus');
+    if (timer.remainingMs <= 0) setMode('focus');
+    start();
+  }
+  rerender();
+};
+
+// Lanza un pomodoro de foco para un bloque de trabajo (sin tarea), con una etiqueta libre.
+export const startPomodoroForBlock = (label, projectId) => {
+  timer.taskId = null;
+  timer.projectId = projectId || null;
+  timer.label = label || 'Bloque de trabajo';
   if (!timer.running) {
     if (timer.mode !== 'focus') setMode('focus');
     if (timer.remainingMs <= 0) setMode('focus');

@@ -205,6 +205,8 @@ export const state = {
   },
   fitness: defaultFitness(),
   mytime: defaultMyTime(),
+  bills: [],   // cuentas por pagar: { id, name, amount, frequency, dueDay, payMethod, url, notes, paidMonths:[] }
+  promos: [],  // promociones/cupones: { id, name, source, card, benefit, cadence, validUntil, usedDates:[], notes, url }
   vault: null,
   lastUsed: { projectId: null, view: 'today' },
 };
@@ -242,6 +244,8 @@ const persist = debounce(async () => {
       settings: state.settings,
       fitness: state.fitness,
       mytime: state.mytime,
+      bills: state.bills,
+      promos: state.promos,
       lastUsed: state.lastUsed,
     };
     await api.putState(payload);
@@ -297,6 +301,9 @@ export const initState = async () => {
     state.mytime ||= defaultMyTime();
     state.mytime.days ||= {};
     if (!Array.isArray(state.mytime.reflections)) state.mytime.reflections = [];
+    // Cuentas por pagar + promociones
+    if (!Array.isArray(state.bills)) state.bills = [];
+    if (!Array.isArray(state.promos)) state.promos = [];
     // Migrate legacy whiteboards: notes[] → items[] with type='sticky'.
     // Keep this idempotent so re-loads after upgrade are safe.
     for (const wb of state.whiteboards) {
@@ -870,6 +877,7 @@ export const addBlock = (data) => {
     date: data.date || todayKey(),
     start: data.start,
     end: data.end,
+    kind: data.kind || 'work',   // 'work' | 'meeting'
     projectId: data.projectId || null,
     notes: data.notes || '',
     createdAt: Date.now(),

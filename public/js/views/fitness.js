@@ -13,6 +13,7 @@ let bodyView = 'front';
 let showFoodForm = false;
 let actIntensity = 'moderado';    // intensidad seleccionada para registrar actividad
 let editPlan = false;             // modo edición del plan de gym
+let showBowel = false;            // seguimiento de digestión (oculto por defecto)
 const expandedEx = new Set();     // ejercicios con "cómo se hace" abierto
 const expandedHabits = new Set(); // hábitos con sub-items abiertos
 
@@ -119,6 +120,8 @@ function saveDay(date, fields) { mutate(s => { const cur = s.fitness.days[date] 
 function addWater(date, ml) { mutate(s => { const d = s.fitness.days[date] || (s.fitness.days[date] = {}); d.waterMl = Math.max(0, num(d.waterMl) + ml); }); }
 function addMeditation(date, min) { mutate(s => { const d = s.fitness.days[date] || (s.fitness.days[date] = {}); d.meditationMin = Math.max(0, num(d.meditationMin) + min); }); }
 function patchSup(date, key, val) { mutate(s => { const d = s.fitness.days[date] || (s.fitness.days[date] = {}); d[key] = val; }); }
+function addBowel(date, bristol) { mutate(s => { const d = s.fitness.days[date] || (s.fitness.days[date] = {}); d.bowelLog = d.bowelLog || []; d.bowelLog.push({ id: uid(), time: nowHM(), bristol: bristol || null }); }); }
+function removeBowel(date, id) { mutate(s => { const d = s.fitness.days[date]; if (!d || !d.bowelLog) return; d.bowelLog = d.bowelLog.filter(e => e.id !== id); }); }
 const CAFFEINE = { cafe: { mg: 95, label: 'Café', ml: 200 }, mate_medio: { mg: 110, label: 'Mate ½ termo', ml: 500 }, mate_full: { mg: 220, label: 'Mate 1L', ml: 1000 }, espresso: { mg: 63, label: 'Espresso', ml: 50 }, te: { mg: 40, label: 'Té', ml: 250 } };
 // Líquido de las bebidas con cafeína (mate, café, té) — también hidrata.
 function caffeineFluidMl(dayKey) {
@@ -699,6 +702,26 @@ function daySummaryTable(k) {
     <button class="btn btn-secondary btn-sm" id="fit-go-bienestar2" style="margin-top:10px">Cargar bienestar / suplementos</button>
   </div>`;
 }
+// Seguimiento de digestión (discreto, colapsado por defecto). Útil para ver si la dieta te cae bien.
+function bowelCard(k) {
+  const d = getDay(k); const log = d.bowelLog || [];
+  if (!showBowel) {
+    return `<div class="card fit-bowel"><button class="fit-bowel-toggle" id="fit-bowel-open">🚽 Digestión <span class="muted text-xs">— seguimiento ${log.length ? '· hoy ' + log.length : ''} · ▸</span></button></div>`;
+  }
+  const f = F(); let days7 = 0, total7 = 0;
+  for (let i = 0; i < 7; i++) { const rec = (f.days || {})[todayKey(addDays(new Date(), -i))]; if (rec) { days7++; total7 += (rec.bowelLog || []).length; } }
+  const avg = days7 ? (total7 / days7).toFixed(1) : '—';
+  return `<div class="card fit-bowel"><button class="fit-bowel-toggle" id="fit-bowel-open"><span class="card-title" style="margin:0">🚽 Digestión ▾</span></button>
+    <div class="fit-well-val" style="margin-top:6px">${log.length} <span>hoy · prom 7d ${avg}/día</span></div>
+    <div class="row gap-6" style="margin-top:10px;flex-wrap:wrap;align-items:center">
+      <button class="btn btn-secondary btn-sm" id="fit-bowel-add">+ Registrar (ahora)</button>
+      <span class="muted text-xs">o tipo (Bristol 1–7):</span>
+      ${[1, 2, 3, 4, 5, 6, 7].map(n => `<button class="btn btn-ghost btn-sm" data-bowel-b="${n}">${n}</button>`).join('')}
+    </div>
+    ${log.length ? `<div class="fit-caf-log" style="margin-top:8px">${log.map(e => `<span class="fit-caf-item">${escapeHtml(e.time || '')}${e.bristol ? ' · tipo ' + e.bristol : ''} <b data-boweldel="${e.id}">✕</b></span>`).join('')}</div>` : ''}
+    <div class="muted text-xs" style="margin-top:8px">Escala Bristol: 1–2 duro (constipación), 3–4 ideal, 5–7 blando. Te ayuda a ver si la fibra/hidratación van bien.</div>
+  </div>`;
+}
 function bodyBienestar() {
   const k = tk(), d = getDay(k);
   const track = wellnessTrackCard(k);
@@ -730,7 +753,7 @@ function bodyBienestar() {
     </div>`;
   const blocks = trainingSuggestions();
   const sug = `<div class="card"><div class="card-title">Sugerencias de hoy · según lo que entrenaste</div>${blocks.map(b => `<div class="fit-sug-block"><div class="fit-sug-title">${b.title}</div>${b.items.map(it => `<div class="fit-sug-item"><span class="fit-sug-time">${escapeHtml(it.time)}</span><span>${escapeHtml(it.text)}</span></div>`).join('')}</div>`).join('')}</div>`;
-  return track + sup + movement + routine + sug;
+  return track + sup + movement + routine + sug + bowelCard(k);
 }
 
 function bodyCuerpo() {
@@ -1160,6 +1183,10 @@ function wire(root) {
   all('[data-act]').forEach(b => b.addEventListener('click', () => { const min = num(root.querySelector('#fit-act-min')?.value, 0); logMovement(k, b.dataset.act, min); }));
   all('[data-actdel]').forEach(b => b.addEventListener('click', () => removeMovement(k, b.dataset.actdel)));
   all('[data-sup]').forEach(c => c.addEventListener('change', () => patchSup(k, c.dataset.sup, c.checked)));
+  $('#fit-bowel-open')?.addEventListener('click', () => { showBowel = !showBowel; renderFitness(root); });
+  $('#fit-bowel-add')?.addEventListener('click', () => addBowel(k, null));
+  all('[data-bowel-b]').forEach(b => b.addEventListener('click', () => addBowel(k, +b.dataset.bowelB)));
+  all('[data-boweldel]').forEach(b => b.addEventListener('click', () => removeBowel(k, b.dataset.boweldel)));
   all('[data-habit]').forEach(c => c.addEventListener('change', () => patchHabit(k, c.dataset.habit, c.checked)));
   all('[data-habtoggle]').forEach(b => b.addEventListener('click', () => { const id = b.dataset.habtoggle; if (expandedHabits.has(id)) expandedHabits.delete(id); else expandedHabits.add(id); renderFitness(root); }));
   all('[data-step]').forEach(c => c.addEventListener('change', () => { const [hid, sid] = c.dataset.step.split('|'); patchHabitStep(k, hid, sid, c.checked); }));

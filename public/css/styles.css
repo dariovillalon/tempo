@@ -3048,3 +3048,40 @@ body.focus-on { overflow: hidden; }
 .ep-row .ep-name { flex: 1; min-width: 0; }
 .ep-row .ep-sets { width: 56px; flex: none; text-align: center; }
 .ep-row .ep-reps { width: 72px; flex: none; text-align: center; }
+
+/* ---- Fitness: seguimiento de digestión (discreto) ---- */
+.fit-bowel { opacity: 0.85; }
+.fit-bowel-toggle { background: none; border: none; padding: 0; cursor: pointer; color: var(--text-2); font: inherit; text-align: left; }
+.fit-bowel-toggle:hover { color: var(--text); }
+
+/* ---- Planificador del día (Agenda) ---- */
+.day-add { margin-bottom: 12px; }
+.day-list { display: flex; flex-direction: column; gap: 10px; }
+.day-block { background: var(--surface-1); border: 1px solid var(--border); border-left: 3px solid var(--text-3); border-radius: var(--radius); padding: 12px; }
+.day-block.kind-meeting { border-left-color: var(--violet); }
+.day-block.kind-work { border-left-color: var(--accent); }
+.day-block-top { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.day-block .db-f { width: 102px; flex: none; }
+.day-block .db-title { width: 100%; font-weight: 600; margin-bottom: 6px; }
+.day-block .db-notes { width: 100%; }
+.db-dash { color: var(--text-3); }
+.cal-total { margin-left: auto; }
+.pom-block-label { text-align: center; margin-top: 10px; font-size: 13px; color: var(--text-2); }
+
+/* ---- Cuentas por pagar + Promociones ---- */
+.bill, .promo { background: var(--surface-1); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--radius); padding: 12px; margin-bottom: 10px; }
+.bill.is-paid { opacity: 0.55; border-left-color: var(--green); }
+.promo.is-used { opacity: 0.6; border-left-color: var(--green); }
+.promo.is-exp { opacity: 0.5; border-left-color: var(--red); }
+.bill-top, .promo-top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.bill-name, .promo-name { flex: 1; min-width: 140px; font-weight: 600; }
+.bill-amount { width: 110px; flex: none; text-align: right; }
+.bill-check { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.bill-row2, .promo-row2 { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; align-items: center; }
+.bill-row2 .select, .bill-row2 .input { flex: 1; min-width: 110px; }
+.promo-row2 .input { flex: 1; min-width: 110px; }
+.bill-url, .bill-notes { width: 100%; margin-top: 4px; }
+.bill-link { display: inline-block; margin: 4px 0; font-size: 12px; color: var(--accent); text-decoration: none; }
+.promo-badge { background: var(--accent); color: #14110a; font-weight: 700; font-size: 11px; padding: 2px 8px; border-radius: 999px; }
+.promo-valid { display: flex; align-items: center; gap: 6px; }
+.promo-undo { color: var(--accent); cursor: pointer; text-decoration: underline; }
