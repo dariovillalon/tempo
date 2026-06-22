@@ -3058,6 +3058,10 @@ body.focus-on { overflow: hidden; }
 .fit-bowel { opacity: 0.85; }
 .fit-bowel-toggle { background: none; border: none; padding: 0; cursor: pointer; color: var(--text-2); font: inherit; text-align: left; }
 .fit-bowel-toggle:hover { color: var(--text); }
+.fit-bowel-log { display: flex; flex-direction: column; gap: 6px; }
+.fit-bowel-entry { display: flex; gap: 6px; align-items: center; }
+.fit-bowel-entry .input { width: 110px; flex: none; }
+.fit-bowel-entry .select { width: 120px; flex: none; }
 
 /* ---- Planificador del día (Agenda) ---- */
 .day-add { margin-bottom: 12px; }

@@ -1,13 +1,10 @@
-// notifications.js — desktop notifications for upcoming meetings.
-// Pomodoro end already fires its own notification from the timer module.
+// notifications.js — alarma (sonido + notificación) 2 min antes de cada reunión
+// de la Agenda (bloques locales con kind 'meeting'). El fin de pomodoro avisa aparte.
 
 import { state } from './state.js';
-import { api } from './api.js';
 
 let pollHandle = null;
-const fired = new Set(); // event uid|start fingerprints, cleared at midnight
-
-const fingerprint = (ev) => `${ev.uid || ev.summary}|${ev.start}`;
+const fired = new Set(); // fingerprints de reuniones ya avisadas, se limpia a medianoche
 
 const isPermitted = () => 'Notification' in window && Notification.permission === 'granted';
 
@@ -18,44 +15,71 @@ export const requestNotifPermission = async () => {
   return await Notification.requestPermission();
 };
 
-const checkUpcoming = async () => {
-  if (!isPermitted()) return;
-  if (!state.settings?.notifEnabled) return;
-  const lead = (state.settings?.notifLeadMin ?? 5) * 60 * 1000;
-  const now = Date.now();
+const todayKeyLocal = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+// Beep de alarma con Web Audio (dos pitidos), sin archivos externos.
+let _audioCtx = null;
+const playBeep = () => {
   try {
-    const from = new Date(); from.setHours(0,0,0,0);
-    const to = new Date(from); to.setDate(to.getDate() + 1);
-    const res = await api.getCalendarEvents(from.toISOString(), to.toISOString());
-    if (!res.connected) return;
-    for (const ev of (res.events || [])) {
-      if (ev.allDay) continue;
-      const startMs = new Date(ev.start).getTime();
-      const delta = startMs - now;
-      if (delta > 0 && delta <= lead) {
-        const fp = fingerprint(ev);
-        if (fired.has(fp)) continue;
-        fired.add(fp);
-        const minLeft = Math.max(1, Math.round(delta / 60000));
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    _audioCtx = _audioCtx || new AC();
+    const ctx = _audioCtx;
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    [0, 0.32].forEach(t => {
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = 'sine'; o.frequency.value = 880;
+      const at = ctx.currentTime + t;
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.exponentialRampToValueAtTime(0.35, at + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.28);
+      o.start(at); o.stop(at + 0.3);
+    });
+  } catch {}
+};
+
+// Margen: ~2 min + un colchón por el poll de 30 s, para no perder la ventana.
+const LEAD_MS = 2 * 60 * 1000 + 20 * 1000;
+
+const checkUpcoming = () => {
+  if (state.settings?.notifEnabled === false) return;
+  const now = Date.now();
+  const k = todayKeyLocal();
+  for (const b of (state.blocks || [])) {
+    if (b.kind !== 'meeting' || b.date !== k || !b.start) continue;
+    const [h, m] = b.start.split(':').map(Number);
+    if (!Number.isFinite(h)) continue;
+    const start = new Date(); start.setHours(h, m || 0, 0, 0);
+    const delta = start.getTime() - now;
+    if (delta > 0 && delta <= LEAD_MS) {
+      const fp = `${b.id}|${b.date}|${b.start}`;
+      if (fired.has(fp)) continue;
+      fired.add(fp);
+      const minLeft = Math.max(1, Math.round(delta / 60000));
+      playBeep(); // suena siempre, aunque las notificaciones del navegador no estén permitidas
+      if (isPermitted()) {
         try {
-          new Notification(`Reunión en ${minLeft} min`, {
-            body: `${ev.summary}${ev.location ? ' · ' + ev.location : ''}`,
+          new Notification(`🔔 Reunión en ${minLeft} min — conectate`, {
+            body: b.title || 'Reunión',
             tag: fp,
           });
         } catch {}
       }
     }
-  } catch {}
+  }
 };
 
 export const startNotifications = () => {
-  // Reset the "already fired" set at local midnight so tomorrow's events fire
+  // Limpiar el set de "ya avisadas" a la medianoche local.
   setInterval(() => {
     const now = new Date();
     if (now.getHours() === 0 && now.getMinutes() < 2) fired.clear();
   }, 60_000);
   if (pollHandle) clearInterval(pollHandle);
   pollHandle = setInterval(checkUpcoming, 30_000);
-  // Run once shortly after boot
   setTimeout(checkUpcoming, 4_000);
 };

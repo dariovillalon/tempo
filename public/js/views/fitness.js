@@ -122,6 +122,7 @@ function addMeditation(date, min) { mutate(s => { const d = s.fitness.days[date]
 function patchSup(date, key, val) { mutate(s => { const d = s.fitness.days[date] || (s.fitness.days[date] = {}); d[key] = val; }); }
 function addBowel(date, bristol) { mutate(s => { const d = s.fitness.days[date] || (s.fitness.days[date] = {}); d.bowelLog = d.bowelLog || []; d.bowelLog.push({ id: uid(), time: nowHM(), bristol: bristol || null }); }); }
 function removeBowel(date, id) { mutate(s => { const d = s.fitness.days[date]; if (!d || !d.bowelLog) return; d.bowelLog = d.bowelLog.filter(e => e.id !== id); }); }
+function editBowel(date, id, patch) { mutate(s => { const d = s.fitness.days[date]; if (!d || !d.bowelLog) return; const e = d.bowelLog.find(x => x.id === id); if (e) Object.assign(e, patch); }); }
 const CAFFEINE = { cafe: { mg: 95, label: 'Café', ml: 200 }, mate_medio: { mg: 110, label: 'Mate ½ termo', ml: 500 }, mate_full: { mg: 220, label: 'Mate 1L', ml: 1000 }, espresso: { mg: 63, label: 'Espresso', ml: 50 }, te: { mg: 40, label: 'Té', ml: 250 } };
 // Líquido de las bebidas con cafeína (mate, café, té) — también hidrata.
 function caffeineFluidMl(dayKey) {
@@ -718,7 +719,11 @@ function bowelCard(k) {
       <span class="muted text-xs">o tipo (Bristol 1–7):</span>
       ${[1, 2, 3, 4, 5, 6, 7].map(n => `<button class="btn btn-ghost btn-sm" data-bowel-b="${n}">${n}</button>`).join('')}
     </div>
-    ${log.length ? `<div class="fit-caf-log" style="margin-top:8px">${log.map(e => `<span class="fit-caf-item">${escapeHtml(e.time || '')}${e.bristol ? ' · tipo ' + e.bristol : ''} <b data-boweldel="${e.id}">✕</b></span>`).join('')}</div>` : ''}
+    ${log.length ? `<div class="fit-bowel-log" style="margin-top:8px">${log.map(e => `<div class="fit-bowel-entry">
+        <input type="time" class="input" data-boweltime="${e.id}" value="${escapeHtml(e.time || '')}">
+        <select class="select" data-bowelbris="${e.id}"><option value="">— tipo —</option>${[1, 2, 3, 4, 5, 6, 7].map(n => `<option value="${n}" ${(+e.bristol === n) ? 'selected' : ''}>tipo ${n}</option>`).join('')}</select>
+        <button class="btn btn-ghost btn-sm" data-boweldel="${e.id}" title="Borrar">✕</button>
+      </div>`).join('')}</div>` : ''}
     <div class="muted text-xs" style="margin-top:8px">Escala Bristol: 1–2 duro (constipación), 3–4 ideal, 5–7 blando. Te ayuda a ver si la fibra/hidratación van bien.</div>
   </div>`;
 }
@@ -1186,6 +1191,8 @@ function wire(root) {
   $('#fit-bowel-open')?.addEventListener('click', () => { showBowel = !showBowel; renderFitness(root); });
   $('#fit-bowel-add')?.addEventListener('click', () => addBowel(k, null));
   all('[data-bowel-b]').forEach(b => b.addEventListener('click', () => addBowel(k, +b.dataset.bowelB)));
+  all('[data-boweltime]').forEach(i => i.addEventListener('change', () => editBowel(k, i.dataset.boweltime, { time: i.value })));
+  all('[data-bowelbris]').forEach(s => s.addEventListener('change', () => editBowel(k, s.dataset.bowelbris, { bristol: s.value ? +s.value : null })));
   all('[data-boweldel]').forEach(b => b.addEventListener('click', () => removeBowel(k, b.dataset.boweldel)));
   all('[data-habit]').forEach(c => c.addEventListener('change', () => patchHabit(k, c.dataset.habit, c.checked)));
   all('[data-habtoggle]').forEach(b => b.addEventListener('click', () => { const id = b.dataset.habtoggle; if (expandedHabits.has(id)) expandedHabits.delete(id); else expandedHabits.add(id); renderFitness(root); }));
