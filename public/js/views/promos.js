@@ -4,6 +4,7 @@
 import { state, mutate } from '../state.js';
 import { uid, escapeHtml, todayKey } from '../utils.js';
 
+const expandedPromos = new Set(); // promos expandidas (por defecto colapsadas)
 const monthNow = () => new Date().toISOString().slice(0, 7);
 const usedThisMonth = (p) => (p.usedDates || []).some(d => (d || '').startsWith(monthNow()));
 const isExpired = (p) => p.validUntil && p.validUntil < todayKey();
@@ -24,8 +25,22 @@ export const renderPromos = (root) => {
   const promoCard = (p) => {
     const used = usedThisMonth(p), exp = isExpired(p);
     const last = (p.usedDates || []).slice(-1)[0];
-    return `<div class="promo ${used ? 'is-used' : ''} ${exp ? 'is-exp' : ''}">
+    const open = expandedPromos.has(p.id);
+    if (!open) {
+      return `<div class="promo ${used ? 'is-used' : ''} ${exp ? 'is-exp' : ''}">
+        <div class="day-block-line">
+          <button class="bill-toggle" data-ptoggle="${p.id}" title="Expandir">▸</button>
+          ${exp ? '<span class="muted text-xs">(vencida)</span>' : `<button class="btn ${used ? 'btn-ghost' : 'btn-secondary'} btn-sm" data-pgo="${p.id}">${used ? '✓ Usada' : 'Usar hoy'}</button>`}
+          <span class="db-line-title">${escapeHtml(p.name || '(sin nombre)')}</span>
+          ${p.benefit ? `<span class="promo-badge">${escapeHtml(p.benefit)}</span>` : ''}
+          ${p.card ? `<span class="muted text-xs">${escapeHtml(p.card)}</span>` : ''}
+          <button class="btn btn-ghost btn-sm" data-pdelete="${p.id}" title="Eliminar">✕</button>
+        </div>
+      </div>`;
+    }
+    return `<div class="promo is-open ${used ? 'is-used' : ''} ${exp ? 'is-exp' : ''}">
       <div class="promo-top">
+        <button class="bill-toggle" data-ptoggle="${p.id}" title="Contraer">▾</button>
         ${exp ? '' : `<button class="btn ${used ? 'btn-ghost' : 'btn-secondary'} btn-sm" data-pgo="${p.id}">${used ? '✓ Usada' : 'Usar hoy'}</button>`}
         <input type="text" class="input promo-name" data-pid="${p.id}" data-f="name" value="${escapeHtml(p.name || '')}" placeholder="Promo (ej: 20% en super)">
         ${p.benefit ? `<span class="promo-badge">${escapeHtml(p.benefit)}</span>` : ''}
@@ -66,6 +81,7 @@ export const renderPromos = (root) => {
 
   const $ = (s) => root.querySelector(s); const all = (s) => Array.from(root.querySelectorAll(s));
   $('#promo-add')?.addEventListener('click', () => { const name = $('#promo-new-name').value.trim(); if (!name) return; addPromo({ name, source: $('#promo-new-source').value, card: $('#promo-new-card').value, validUntil: $('#promo-new-valid').value }); });
+  all('[data-ptoggle]').forEach(b => b.addEventListener('click', () => { const id = b.dataset.ptoggle; if (expandedPromos.has(id)) expandedPromos.delete(id); else expandedPromos.add(id); renderPromos(root); }));
   all('[data-pgo]').forEach(b => b.addEventListener('click', () => { const p = state.promos.find(x => x.id === b.dataset.pgo); if (p && usedThisMonth(p)) undoUse(b.dataset.pgo); else useToday(b.dataset.pgo); }));
   all('[data-pundo]').forEach(a => a.addEventListener('click', () => undoUse(a.dataset.pundo)));
   all('[data-pdelete]').forEach(b => b.addEventListener('click', () => delPromo(b.dataset.pdelete)));

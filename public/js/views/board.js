@@ -22,6 +22,7 @@ let prioFilter = 'all';
 let tagFilter = 'all';       // 'all' | tag string
 let assigneeFilter = 'all';  // 'all' | 'unassigned' | 'Dario' | 'Mariel'
 let searchTerm = '';
+const collapsedCols = new Set(); // columnas plegadas del board
 
 // Collect all tags currently used by tasks (deduped, sorted).
 const collectTags = (scopedTasks) => {
@@ -54,6 +55,12 @@ const taskHasTag = (t, tag) => {
 };
 
 export const renderBoard = (root) => {
+  // Preservar la posición del scroll: el board se re-renderiza al mover/filtrar
+  // y sin esto la página saltaría arriba.
+  const _sc = document.getElementById('view-content');
+  const _top = _sc ? _sc.scrollTop : 0;
+  if (_sc && typeof requestAnimationFrame === 'function') requestAnimationFrame(() => { _sc.scrollTop = _top; });
+
   const projs = state.projects.filter(p => p.status !== 'archived');
   const roots = projs.filter(p => !p.parentId);
 
@@ -254,6 +261,14 @@ export const renderBoard = (root) => {
     });
   });
 
+  // Plegar / desplegar columnas
+  root.querySelectorAll('[data-coltoggle]').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const id = btn.dataset.coltoggle;
+    if (collapsedCols.has(id)) collapsedCols.delete(id); else collapsedCols.add(id);
+    renderBoard(root);
+  }));
+
   // Wire columns
   root.querySelectorAll('.kanban-col').forEach(col => {
     col.addEventListener('dragover', (e) => {
@@ -313,16 +328,18 @@ const renderColumn = (col) => {
       return (pri[a.priority] || 1) - (pri[b.priority] || 1);
     });
 
+  const collapsed = collapsedCols.has(col.id);
   return `
-    <div class="kanban-col" data-state="${col.id}">
+    <div class="kanban-col ${collapsed ? 'is-collapsed' : ''}" data-state="${col.id}">
       <div class="kanban-col-h">
-        <span>${escapeHtml(col.label)}</span>
+        <button class="kanban-col-toggle" data-coltoggle="${col.id}" title="${collapsed ? 'Expandir' : 'Plegar'}">${collapsed ? '▸' : '▾'}</button>
+        <span class="kanban-col-label">${escapeHtml(col.label)}</span>
         <span class="count">${tasks.length}</span>
       </div>
-      <div class="kanban-col-body">
+      ${collapsed ? '' : `<div class="kanban-col-body">
         ${tasks.map(renderCard).join('') || '<div class="empty" style="padding:8px 4px;font-size:11.5px">vacío</div>'}
       </div>
-      <button class="kanban-add" data-state="${col.id}">+ Agregar tarea</button>
+      <button class="kanban-add" data-state="${col.id}">+ Agregar tarea</button>`}
     </div>
   `;
 };

@@ -767,13 +767,18 @@ a:hover { text-decoration: underline; }
 .board-filter:hover { color: var(--text); }
 
 .kanban {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
   gap: 12px;
-  height: calc(100vh - var(--topbar-h) - 130px);
 }
-@media (max-width: 1280px) { .kanban { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 800px) { .kanban { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.kanban > .kanban-col { flex: 1 1 180px; min-width: 0; max-height: calc(100vh - var(--topbar-h) - 150px); }
+.kanban > .kanban-col.is-collapsed { flex: 0 0 46px; min-width: 46px; max-height: none; }
+.kanban-col.is-collapsed .kanban-col-h { flex-direction: column; gap: 8px; padding: 10px 4px; }
+.kanban-col.is-collapsed .kanban-col-label { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; }
+.kanban-col-toggle { background: none; border: none; color: var(--text-3); cursor: pointer; font-size: 11px; padding: 0 2px; line-height: 1; }
+.kanban-col-toggle:hover { color: var(--text); }
+@media (max-width: 800px) { .kanban > .kanban-col { flex: 1 1 140px; } }
 
 .kanban-col {
   display: flex; flex-direction: column;
