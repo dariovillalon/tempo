@@ -142,7 +142,12 @@ const main = async () => {
       const view = router.current().split('/')[0];
       if (!view || view === 'pomodoro') return;
       if (document.querySelector('.modal-backdrop.open')) return;
+      // Preservar el scroll: re-renderizar reemplaza el HTML y, sin esto, la
+      // página salta arriba cada vez que tocás un check.
+      const sc = document.getElementById('view-content');
+      const top = sc ? sc.scrollTop : 0;
       router.refresh();
+      if (sc) { sc.scrollTop = top; requestAnimationFrame(() => { sc.scrollTop = top; }); }
     }, 0);
   });
 

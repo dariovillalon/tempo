@@ -3065,6 +3065,10 @@ body.focus-on { overflow: hidden; }
 .day-block .db-title { width: 100%; font-weight: 600; margin-bottom: 6px; }
 .day-block .db-notes { width: 100%; }
 .db-dash { color: var(--text-3); }
+.day-block-line { display: flex; gap: 8px; align-items: center; }
+.db-time-lbl { font-family: var(--font-mono); font-size: 12px; color: var(--text-3); white-space: nowrap; flex: none; }
+.db-line-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-weight: 500; }
+.db-note-dot { flex: none; font-size: 11px; opacity: 0.7; }
 .cal-total { margin-left: auto; }
 .pom-block-label { text-align: center; margin-top: 10px; font-size: 13px; color: var(--text-2); }
 
@@ -3085,3 +3089,10 @@ body.focus-on { overflow: hidden; }
 .promo-badge { background: var(--accent); color: #14110a; font-weight: 700; font-size: 11px; padding: 2px 8px; border-radius: 999px; }
 .promo-valid { display: flex; align-items: center; gap: 6px; }
 .promo-undo { color: var(--accent); cursor: pointer; text-decoration: underline; }
+.bill-toggle { background: none; border: none; color: var(--text-3); cursor: pointer; font-size: 13px; padding: 2px 4px; flex: none; }
+.bill-toggle:hover { color: var(--text); }
+.bill-meta { font-size: 11.5px; white-space: nowrap; flex: none; }
+.bill:not(.is-open) .bill-top { margin-bottom: 0; }
+.bills-tabs { margin-bottom: 12px; }
+.hist-row { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13.5px; }
+.hist-row:last-child { border-bottom: none; }

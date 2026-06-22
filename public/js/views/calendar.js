@@ -8,6 +8,7 @@ import { startPomodoroForBlock } from './pomodoro.js';
 import { router } from '../router.js';
 
 let dayAnchor = null;
+const expandedBlocks = new Set(); // bloques expandidos (por defecto colapsados)
 
 // Compatibilidad: la agenda ya no usa calendarios externos (Google), pero settings.js
 // todavía importa esto. Lo dejamos como no-op para no romper nada.
@@ -25,8 +26,23 @@ export const renderCalendar = (root) => {
 
   const blockRow = (b) => {
     const kind = b.kind || 'work';
-    return `<div class="day-block kind-${kind}">
+    const open = expandedBlocks.has(b.id);
+    const kindEmoji = kind === 'meeting' ? '📅' : '💼';
+    if (!open) {
+      return `<div class="day-block kind-${kind}">
+        <div class="day-block-line">
+          <button class="bill-toggle" data-dtoggle="${b.id}" title="Expandir">▸</button>
+          <span class="db-time-lbl">${escapeHtml(b.start || '--:--')}–${escapeHtml(b.end || '--:--')}</span>
+          <span class="db-line-title">${kindEmoji} ${escapeHtml(b.title || '(sin título)')}</span>
+          ${b.notes ? '<span class="db-note-dot" title="Tiene notas">📝</span>' : ''}
+          ${kind === 'work' ? `<button class="btn btn-secondary btn-sm" data-pomo="${b.id}" title="Lanzar pomodoro">▶</button>` : ''}
+          <button class="btn btn-ghost btn-sm" data-bdel="${b.id}" title="Eliminar">✕</button>
+        </div>
+      </div>`;
+    }
+    return `<div class="day-block kind-${kind} is-open">
       <div class="day-block-top">
+        <button class="bill-toggle" data-dtoggle="${b.id}" title="Contraer">▾</button>
         <input type="time" class="input db-f" data-bid="${b.id}" data-f="start" value="${b.start || ''}">
         <span class="db-dash">–</span>
         <input type="time" class="input db-f" data-bid="${b.id}" data-f="end" value="${b.end || ''}">
@@ -86,6 +102,7 @@ export const renderCalendar = (root) => {
     renderCalendar(root);
   });
 
+  all('[data-dtoggle]').forEach(b => b.addEventListener('click', () => { const id = b.dataset.dtoggle; if (expandedBlocks.has(id)) expandedBlocks.delete(id); else expandedBlocks.add(id); renderCalendar(root); }));
   all('.db-f').forEach(i => i.addEventListener('change', () => updateBlock(i.dataset.bid, { [i.dataset.f]: i.value })));
   all('.db-kind').forEach(s => s.addEventListener('change', () => { updateBlock(s.dataset.bid, { kind: s.value }); renderCalendar(root); }));
   all('.db-title').forEach(i => i.addEventListener('change', () => updateBlock(i.dataset.bid, { title: i.value })));

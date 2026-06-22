@@ -5,6 +5,30 @@ import { state, mutate } from '../state.js';
 import { uid, escapeHtml } from '../utils.js';
 
 const FREQS = [['mensual', 'Mensual'], ['bimestral', 'Bimestral'], ['anual', 'Anual'], ['puntual', 'Puntual']];
+const FREQ_LBL = Object.fromEntries(FREQS);
+const expandedBills = new Set(); // ids de cuentas expandidas (por defecto colapsadas)
+let billView = 'actual';         // 'actual' (por pagar) | 'historial'
+
+const MESES = ['', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const fmtPeriod = (pk) => {
+  if (pk === 'once') return 'Pagos puntuales';
+  if (/^\d{4}$/.test(pk)) return `Año ${pk}`;
+  const [y, m] = pk.split('-');
+  return `${MESES[+m] || m} ${y}`;
+};
+// Historial de pagos: agrupa por período (mes/año) qué cuentas se marcaron pagadas.
+function historyView() {
+  const map = {};
+  for (const b of state.bills) for (const pk of (b.paidMonths || [])) (map[pk] ||= []).push({ name: b.name, amount: parseFloat(b.amount) || 0 });
+  const keys = Object.keys(map).sort().reverse();
+  if (!keys.length) return '<div class="card"><div class="muted text-xs">Todavía no marcaste ninguna cuenta como pagada. Cuando marques "Pagado", queda registrado acá por mes.</div></div>';
+  return keys.map(pk => {
+    const items = map[pk]; const total = items.reduce((s, i) => s + i.amount, 0);
+    return `<div class="card"><div class="card-title">${fmtPeriod(pk)} <span class="muted text-xs">· ${items.length} pago(s)${total > 0 ? ` · ~$${total.toLocaleString('es-AR')}` : ''}</span></div>
+      ${items.map(i => `<div class="hist-row"><span>✅ ${escapeHtml(i.name || '(sin nombre)')}</span>${i.amount > 0 ? `<span class="muted">$${i.amount.toLocaleString('es-AR')}</span>` : ''}</div>`).join('')}
+    </div>`;
+  }).join('');
+}
 
 const periodKey = (freq) => {
   const now = new Date();
@@ -32,13 +56,18 @@ export const renderBills = (root) => {
 
   const billCard = (b) => {
     const paidNow = isPaid(b);
-    return `<div class="bill ${paidNow ? 'is-paid' : ''}">
+    const open = expandedBills.has(b.id);
+    const meta = [FREQ_LBL[b.frequency || 'mensual'], b.dueDay ? `vence ${b.dueDay}` : '', b.payMethod].filter(Boolean).join(' · ');
+    return `<div class="bill ${paidNow ? 'is-paid' : ''} ${open ? 'is-open' : ''}">
       <div class="bill-top">
-        <label class="bill-check"><input type="checkbox" data-bpaid="${b.id}" ${paidNow ? 'checked' : ''}><span>Pagado</span></label>
+        <button class="bill-toggle" data-btoggle="${b.id}" title="${open ? 'Contraer' : 'Expandir'}">${open ? '▾' : '▸'}</button>
+        <input type="checkbox" data-bpaid="${b.id}" ${paidNow ? 'checked' : ''} title="Pagado">
         <input type="text" class="input bill-name" data-bid="${b.id}" data-f="name" value="${escapeHtml(b.name || '')}" placeholder="Nombre (ej: Visa BBVA)">
+        ${!open && meta ? `<span class="bill-meta muted">${escapeHtml(meta)}</span>` : ''}
         <input type="number" class="input bill-amount" data-bid="${b.id}" data-f="amount" value="${escapeHtml(String(b.amount || ''))}" placeholder="$ monto">
         <button class="btn btn-ghost btn-sm" data-bdelete="${b.id}" title="Eliminar">✕</button>
       </div>
+      ${open ? `
       <div class="bill-row2">
         <select class="select" data-bid="${b.id}" data-f="frequency">${FREQS.map(([v, l]) => `<option value="${v}" ${(b.frequency || 'mensual') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
         <input type="number" min="1" max="31" class="input bill-due" data-bid="${b.id}" data-f="dueDay" value="${escapeHtml(String(b.dueDay || ''))}" placeholder="vence día" title="Día de vencimiento">
@@ -46,11 +75,23 @@ export const renderBills = (root) => {
       </div>
       <input type="text" class="input bill-url" data-bid="${b.id}" data-f="url" value="${escapeHtml(b.url || '')}" placeholder="Link de pago (opcional)">
       ${b.url ? `<a href="${escapeHtml(b.url)}" target="_blank" rel="noopener" class="bill-link">↗ Abrir link de pago</a>` : ''}
-      <textarea class="textarea bill-notes" data-bid="${b.id}" data-f="notes" rows="1" placeholder="Notas (nº de cliente, observaciones…)">${escapeHtml(b.notes || '')}</textarea>
+      <textarea class="textarea bill-notes" data-bid="${b.id}" data-f="notes" rows="1" placeholder="Notas (nº de cliente, observaciones…)">${escapeHtml(b.notes || '')}</textarea>` : ''}
     </div>`;
   };
 
-  root.innerHTML = `
+  const tabs = `<div class="fit-day-tabs bills-tabs">
+      <button class="fit-day-tab ${billView === 'actual' ? 'active' : ''}" data-billview="actual">Por pagar</button>
+      <button class="fit-day-tab ${billView === 'historial' ? 'active' : ''}" data-billview="historial">Historial</button>
+    </div>`;
+  const wireTabs = () => Array.from(root.querySelectorAll('[data-billview]')).forEach(b => b.addEventListener('click', () => { billView = b.dataset.billview; renderBills(root); }));
+
+  if (billView === 'historial') {
+    root.innerHTML = tabs + historyView();
+    wireTabs();
+    return;
+  }
+
+  root.innerHTML = tabs + `
     <div class="card">
       <div class="card-title">Cuentas por pagar</div>
       <div class="muted text-xs">Pendientes este período: <b>${pend.length}</b>${sumPend > 0 ? ` · ~$${sumPend.toLocaleString('es-AR')}` : ''}</div>
@@ -68,7 +109,9 @@ export const renderBills = (root) => {
   `;
 
   const $ = (s) => root.querySelector(s); const all = (s) => Array.from(root.querySelectorAll(s));
+  wireTabs();
   $('#bill-add')?.addEventListener('click', () => { const name = $('#bill-new-name').value.trim(); if (!name) return; addBill({ name, amount: $('#bill-new-amount').value, frequency: $('#bill-new-freq').value, dueDay: $('#bill-new-due').value }); });
+  all('[data-btoggle]').forEach(b => b.addEventListener('click', () => { const id = b.dataset.btoggle; if (expandedBills.has(id)) expandedBills.delete(id); else expandedBills.add(id); renderBills(root); }));
   all('[data-bpaid]').forEach(c => c.addEventListener('change', () => togglePaid(c.dataset.bpaid)));
   all('[data-bdelete]').forEach(b => b.addEventListener('click', () => delBill(b.dataset.bdelete)));
   all('[data-bid][data-f]').forEach(el => el.addEventListener('change', () => patchBill(el.dataset.bid, { [el.dataset.f]: el.value })));
