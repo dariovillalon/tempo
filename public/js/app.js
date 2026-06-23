@@ -26,6 +26,18 @@ const wireSidebar = () => {
   });
   document.getElementById('pom-mini').addEventListener('click', () => router.go('pomodoro'));
 
+  // "Más" toggle: collapse all nav items except Agenda y Fitness. Default collapsed; remembered.
+  const sidebar = document.querySelector('.sidebar');
+  const moreToggle = document.getElementById('nav-more-toggle');
+  if (sidebar && moreToggle) {
+    const collapsed = localStorage.getItem('navMoreCollapsed');
+    if (collapsed === null || collapsed === '1') sidebar.classList.add('more-collapsed');
+    moreToggle.addEventListener('click', () => {
+      const isCollapsed = sidebar.classList.toggle('more-collapsed');
+      localStorage.setItem('navMoreCollapsed', isCollapsed ? '1' : '0');
+    });
+  }
+
   // Topbar refresh: re-read tasks/ folder from each linked project (vault wins).
   const refreshBtn = document.getElementById('vault-refresh-btn');
   if (refreshBtn) refreshBtn.addEventListener('click', async () => {
