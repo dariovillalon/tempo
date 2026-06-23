@@ -3120,4 +3120,5 @@ body.focus-on { overflow: hidden; }
 .nav-more-toggle:hover { color: var(--text); }
 .nav-more-chev { display: inline-block; transition: transform .15s; font-size: 10px; }
 .sidebar.more-collapsed .nav-more { display: none; }
+.sidebar.more-collapsed #projects-section { display: none; }
 .sidebar.more-collapsed .nav-more-chev { transform: rotate(-90deg); }
