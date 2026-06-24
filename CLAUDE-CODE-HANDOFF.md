@@ -28,8 +28,14 @@ Archivo: `public/js/views/fitness.js`
 - `public/js/views/calendar.js`: se quitó `router.go('pomodoro')` del handler `[data-pomo]` → el pomodoro arranca y Dario se queda en la Agenda.
 - CSS `.pom-float*` en `public/css/styles.css`.
 
-### 4. Datos
-- `data/state.json`: agregado pesaje 2026-06-24 (71.45 kg, 18.3% grasa, 55.35 músculo, etc.).
+### 4. Biblioteca de comidas curada (en CÓDIGO)
+Archivo: `public/js/state.js`
+- `defaultFoodLibrary()` reemplazada por la lista curada de Dario (solo lo que come seguido), en 2 grupos: **Desayuno / Merienda** (12) y **Almuerzo / Cena** (12, incluye "Tarta de pollo, huevo y verduras (1 porción)" y "ChocoArroz alfajor limón (1u)").
+- Migración one-shot: `FOOD_LIBRARY_VERSION = 2`. En `initState`, si `state.fitness.foodLibraryVersion !== 2` se reemplaza la biblioteca vieja (genérica) por la nueva y se setea la versión. Corre una sola vez por estado. OJO: pisa cualquier "Alimento propio" agregado antes (en web no había ninguno).
+- Por qué en código y no en datos: la web corre Neon; un write directo a la DB es frágil (la pestaña abierta lo pisa). Con la migración, se autoaplica en la próxima carga después del deploy.
+
+### 5. Datos
+- `data/state.json` (local): agregado pesaje 2026-06-24 (71.45 kg) + comida tarta de pollo. (No crítico para el deploy; es data local.)
 
 ### Deploy / cómo ver los cambios
 - Local: recargar la página (archivos estáticos servidos en vivo).
