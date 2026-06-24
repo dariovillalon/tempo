@@ -156,12 +156,7 @@ export const defaultFoodLibrary = () => ([
   // ----- Desayuno / Merienda -----
   { id: 'u_des_tostada_3huevos', emoji: '🍳', name: 'Mi desayuno (tostada casera + 3 huevos)',            kcal: 410, protein: 24, group: 'Desayuno / Merienda' },
   { id: 'u_des_4huevos_queso',   emoji: '🍳', name: 'Desayuno: 4 huevos + tostada integral + queso protein', kcal: 370, protein: 31, group: 'Desayuno / Merienda' },
-  { id: 'u_tostadas_jamon_queso',emoji: '🥪', name: 'Tostadas c/ jamón y queso (2)',                       kcal: 350, protein: 20, group: 'Desayuno / Merienda' },
   { id: 'u_huevos_revueltos',    emoji: '🍳', name: 'Huevos revueltos (3)',                                kcal: 270, protein: 19, group: 'Desayuno / Merienda' },
-  { id: 'u_salsa_palta',         emoji: '🥑', name: 'Salsa de palta',                                      kcal: 90,  protein: 1,  group: 'Desayuno / Merienda' },
-  { id: 'u_cafe_leche',          emoji: '☕', name: 'Café grande c/ leche',                                kcal: 40,  protein: 2,  group: 'Desayuno / Merienda' },
-  { id: 'u_ensalada_fruta',      emoji: '🍓', name: 'Ensalada de fruta (vasito)',                          kcal: 90,  protein: 1,  group: 'Desayuno / Merienda' },
-  { id: 'u_durazno',             emoji: '🍑', name: 'Durazno en mitades (compotera)',                      kcal: 140, protein: 1,  group: 'Desayuno / Merienda' },
   { id: 'u_banana',              emoji: '🍌', name: 'Banana',                                              kcal: 105, protein: 1,  group: 'Desayuno / Merienda' },
   { id: 'u_flan_proteico',       emoji: '🍮', name: 'Flan proteico casero (1/6)',                          kcal: 186, protein: 19, group: 'Desayuno / Merienda' },
   { id: 'u_frutos_secos',        emoji: '🥜', name: 'Puñado de frutos secos (30g)',                        kcal: 155, protein: 5,  group: 'Desayuno / Merienda' },
@@ -170,12 +165,6 @@ export const defaultFoodLibrary = () => ([
   { id: 'u_milanesas_pure',      emoji: '🍗', name: 'Almuerzo: 2 milanesas pollo + queso protein + puré calabaza/papa', kcal: 700, protein: 64, group: 'Almuerzo / Cena' },
   { id: 'u_chicken_poke',        emoji: '🥗', name: 'Chicken Poke (arroz, pollo teriyaki, palta, maíz, veggies)',       kcal: 930, protein: 40, group: 'Almuerzo / Cena' },
   { id: 'u_fajitas_pollo',       emoji: '🌯', name: '4 fajitas de pollo c/ salsa de yogur griego, cebolla y palta',     kcal: 1200,protein: 80, group: 'Almuerzo / Cena' },
-  { id: 'u_osobuco',             emoji: '🍖', name: 'Osobuco con arroz amarillo (buena porción)',          kcal: 780, protein: 48, group: 'Almuerzo / Cena' },
-  { id: 'u_sushi',               emoji: '🍣', name: 'Sushi 15 piezas + salsa soja',                        kcal: 820, protein: 32, group: 'Almuerzo / Cena' },
-  { id: 'u_wrap_casero',         emoji: '🌯', name: 'Wrap de pollo (guaca, queso, pollo)',                 kcal: 600, protein: 33, group: 'Almuerzo / Cena' },
-  { id: 'u_wrap_club',           emoji: '🌯', name: 'Wrap de pollo (Club de la Milanesa)',                 kcal: 720, protein: 42, group: 'Almuerzo / Cena' },
-  { id: 'u_sorrentinos',         emoji: '🍝', name: 'Sorrentinos jamón y queso (6) c/ crema y salsa roja con carne',    kcal: 720, protein: 30, group: 'Almuerzo / Cena' },
-  { id: 'u_verduras_airfryer',   emoji: '🍠', name: 'Verduras airfryer (batata, zanahoria, papa)',         kcal: 235, protein: 4,  group: 'Almuerzo / Cena' },
   { id: 'u_hojas_verdes',        emoji: '🥬', name: 'Hojas verdes (kale, acelga, remolacha)',              kcal: 30,  protein: 2,  group: 'Almuerzo / Cena' },
   { id: 'u_papas_fritas',        emoji: '🍟', name: 'Papas fritas (porción chica)',                        kcal: 300, protein: 4,  group: 'Almuerzo / Cena' },
   { id: 'u_tarta_pollo_porcion', emoji: '🥧', name: 'Tarta de pollo, huevo y verduras (1 porción)',        kcal: 250, protein: 14, group: 'Almuerzo / Cena' },
@@ -183,7 +172,7 @@ export const defaultFoodLibrary = () => ([
 
 // Versión de la biblioteca curada. Subir este número fuerza un reemplazo de la
 // lista vieja (genérica) por la nueva en la próxima carga, una sola vez.
-export const FOOD_LIBRARY_VERSION = 2;
+export const FOOD_LIBRARY_VERSION = 3;
 
 export const defaultFitness = () => ({
   profile: { sex: 'male', age: 30, heightCm: 175, weightKg: 75, activity: 'moderate', goal: 'gain', proteinPerKg: 1.8, surplusPct: 12 },
