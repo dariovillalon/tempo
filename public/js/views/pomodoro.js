@@ -29,6 +29,7 @@ const formatTime = (ms) => {
 };
 
 const updateMiniDisplay = () => {
+  updateFloatingMini();
   const time = document.getElementById('pom-mini-time');
   const label = document.getElementById('pom-mini-label');
   const prog = document.getElementById('pom-mini-progress');
@@ -43,6 +44,56 @@ const updateMiniDisplay = () => {
     prog.setAttribute('stroke-dashoffset', String(C * (1 - ratio)));
   }
   if (wrap) wrap.classList.toggle('running', timer.running);
+};
+
+// ---- Pomodoro flotante: corre en chiquito y te deja en la página actual ----
+// (Se monta una vez en <body> y aparece sólo cuando hay una sesión activa.)
+let _floatMounted = false;
+const mountFloatingMini = () => {
+  if (typeof document === 'undefined' || _floatMounted) return;
+  if (document.getElementById('pom-float')) { _floatMounted = true; return; }
+  const el = document.createElement('div');
+  el.id = 'pom-float';
+  el.className = 'pom-float';
+  el.innerHTML = `
+    <svg class="pom-float-ring" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="10" stroke="var(--surface-3)" stroke-width="2.5"/>
+      <circle id="pom-float-progress" cx="12" cy="12" r="10" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="62.83" stroke-dashoffset="0" transform="rotate(-90 12 12)"/>
+    </svg>
+    <div class="pom-float-info">
+      <div class="pom-float-time" id="pom-float-time">25:00</div>
+      <div class="pom-float-label" id="pom-float-label">Foco</div>
+    </div>
+    <div class="pom-float-ctrls">
+      <button class="pom-float-btn" id="pom-float-toggle" title="Pausar / Reanudar">⏸</button>
+      <button class="pom-float-btn" id="pom-float-skip" title="Saltar">⏭</button>
+      <button class="pom-float-btn" id="pom-float-expand" title="Abrir pomodoro">⤢</button>
+      <button class="pom-float-btn" id="pom-float-close" title="Cerrar">✕</button>
+    </div>`;
+  document.body.appendChild(el);
+  el.querySelector('#pom-float-toggle').addEventListener('click', () => { if (timer.running) pause(); else start(); rerender(); });
+  el.querySelector('#pom-float-skip').addEventListener('click', () => { finish(); });
+  // Abrir la vista completa reutiliza el click del mini de la topbar (evita import circular del router)
+  el.querySelector('#pom-float-expand').addEventListener('click', () => { const m = document.getElementById('pom-mini'); if (m) m.click(); });
+  el.querySelector('#pom-float-close').addEventListener('click', () => { pause(); reset(); updateFloatingMini(); });
+  _floatMounted = true;
+};
+
+const updateFloatingMini = () => {
+  const el = document.getElementById('pom-float');
+  if (!el) return;
+  const active = timer.running || (timer.remainingMs > 0 && timer.remainingMs < timer.totalMs);
+  el.classList.toggle('show', !!active);
+  const time = el.querySelector('#pom-float-time');
+  const label = el.querySelector('#pom-float-label');
+  const prog = el.querySelector('#pom-float-progress');
+  const toggle = el.querySelector('#pom-float-toggle');
+  if (time) time.textContent = formatTime(timer.remainingMs);
+  if (label) label.textContent = (timer.mode === 'focus' ? 'Foco' : (timer.mode === 'long' ? 'Break largo' : 'Break corto')) + (timer.label ? ' · ' + timer.label : '');
+  if (toggle) toggle.textContent = timer.running ? '⏸' : '▶';
+  const C = 2 * Math.PI * 10;
+  const ratio = timer.totalMs ? (1 - timer.remainingMs / timer.totalMs) : 0;
+  if (prog) { prog.setAttribute('stroke-dasharray', String(C)); prog.setAttribute('stroke-dashoffset', String(C * (1 - ratio))); }
 };
 
 const setMode = (mode) => {
@@ -369,6 +420,8 @@ const paint = (root, partial) => {
 // Topbar mini-control: clicking it goes to pomodoro view (handled in app.js)
 // Also keep mini display ticking even when not in view
 export const startGlobalTicker = () => {
+  mountFloatingMini();
+  updateFloatingMini();
   setInterval(updateMiniDisplay, 1000);
 };
 

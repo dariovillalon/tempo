@@ -110,6 +110,8 @@ export const renderCalendar = (root) => {
   all('[data-bdel]').forEach(b => b.addEventListener('click', () => { deleteBlock(b.dataset.bdel); renderCalendar(root); }));
   all('[data-pomo]').forEach(b => b.addEventListener('click', () => {
     const blk = state.blocks.find(x => x.id === b.dataset.pomo);
-    if (blk) { startPomodoroForBlock(blk.title || 'Bloque de trabajo', blk.projectId); router.go('pomodoro'); }
+    // Iniciamos el pomodoro pero NO cambiamos de página: corre en el mini flotante
+    // y Dario sigue viendo la Agenda. (Tocá ⤢ en el mini para abrir la vista completa.)
+    if (blk) startPomodoroForBlock(blk.title || 'Bloque de trabajo', blk.projectId);
   }));
 };

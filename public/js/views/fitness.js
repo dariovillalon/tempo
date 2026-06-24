@@ -16,6 +16,7 @@ let editPlan = false;             // modo edición del plan de gym
 let showBowel = false;            // seguimiento de digestión (oculto por defecto)
 const expandedEx = new Set();     // ejercicios con "cómo se hace" abierto
 const expandedHabits = new Set(); // hábitos con sub-items abiertos
+let weighFromPhoto = false;       // el último pesaje se prellenó desde una captura (OCR)
 
 const F = () => state.fitness;
 const num = (v, d = 0) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d; };
@@ -148,6 +149,22 @@ function logMovement(date, type, minutes) {
 }
 function removeMovement(date, id) {
   mutate(s => { const d = s.fitness.days[date]; if (!d || !d.activityLog) return; d.activityLog = d.activityLog.filter(e => e.id !== id); });
+}
+// ---- Edición de la hora de un registro (la hora se autocarga, pero se puede corregir) ----
+function editCaffeineTime(date, id, time) {
+  mutate(s => { const d = s.fitness.days[date]; if (!d || !d.caffeineLog) return; const e = d.caffeineLog.find(x => x.id === id); if (e) e.time = time; });
+}
+function editActivityTime(date, id, time) {
+  mutate(s => { const d = s.fitness.days[date]; if (!d || !d.activityLog) return; const e = d.activityLog.find(x => x.id === id); if (e) e.time = time; });
+}
+function editMealTime(date, id, time) {
+  mutate(s => {
+    const d = s.fitness.days[date]; if (!d || !d.meals) return;
+    const m = d.meals.find(x => x.id === id); if (!m || !time) return;
+    const [hh, mm] = time.split(':');
+    const dt = new Date(date + 'T00:00:00'); dt.setHours(+hh || 0, +mm || 0, 0, 0);
+    m.ts = dt.getTime();
+  });
 }
 function patchHabit(date, id, checked) {
   mutate(s => {
@@ -662,7 +679,7 @@ function wellnessTrackCard(k) {
         <div class="fit-well"><div class="fit-well-lbl">☕ Cafeína ${infoIcon('caffeine')}</div>
           <div class="fit-well-val">${caf} <span>mg ${cafLate ? '· ⚠️ tarde' : ''}</span></div>
           <div class="row gap-6" style="margin-top:8px;flex-wrap:wrap"><button class="btn btn-ghost btn-sm" data-caf="cafe">+ Café</button><button class="btn btn-ghost btn-sm" data-caf="mate_medio">+ Mate ½</button><button class="btn btn-ghost btn-sm" data-caf="mate_full">+ Mate 1L</button><button class="btn btn-ghost btn-sm" data-caf="espresso">+ Esp.</button><button class="btn btn-ghost btn-sm" data-caf="te">+ Té</button></div>
-          ${cafLog.length ? `<div class="fit-caf-log">${cafLog.map(e => `<span class="fit-caf-item">${escapeHtml(e.time)} ${escapeHtml(e.label)} ${e.mg}mg <b data-cafdel="${e.id}">✕</b></span>`).join('')}</div>` : ''}
+          ${cafLog.length ? `<div class="fit-caf-log">${cafLog.map(e => `<span class="fit-caf-item"><input type="time" class="fit-time-edit" data-caftime="${e.id}" value="${escapeHtml(e.time || '')}"> ${escapeHtml(e.label)} ${e.mg}mg <b data-cafdel="${e.id}">✕</b></span>`).join('')}</div>` : ''}
         </div>
       </div></div>`;
 }
@@ -754,7 +771,7 @@ function bodyBienestar() {
         <input type="number" class="input" id="fit-act-min" value="30" style="width:74px"><span class="muted text-xs">min</span>
         ${Object.keys(ACTIVITIES).map(t => `<button class="btn btn-ghost btn-sm" data-act="${t}">${ACTIVITIES[t].emoji} ${ACTIVITIES[t].label}</button>`).join('')}
       </div>
-      ${acts.length ? `<div class="fit-caf-log" style="margin-top:12px">${acts.map(e => `<span class="fit-caf-item">${escapeHtml(e.time)} ${e.emoji || ''} ${escapeHtml(e.label)}${e.intensityLabel ? ' (' + escapeHtml(e.intensityLabel) + ')' : ''} · ${e.minutes} min · ${e.kcal} kcal <b data-actdel="${e.id}">✕</b></span>`).join('')}<div class="muted text-xs" style="margin-top:5px">Total: ${totMin} min · ~${totKcal} kcal</div></div>` : '<div class="muted text-xs" style="margin-top:10px">Elegí intensidad, poné los minutos y tocá la actividad. Ej: tenis 90 min intenso. (El gym lo registrás en su pestaña.)</div>'}
+      ${acts.length ? `<div class="fit-caf-log" style="margin-top:12px">${acts.map(e => `<span class="fit-caf-item"><input type="time" class="fit-time-edit" data-acttime="${e.id}" value="${escapeHtml(e.time || '')}"> ${e.emoji || ''} ${escapeHtml(e.label)}${e.intensityLabel ? ' (' + escapeHtml(e.intensityLabel) + ')' : ''} · ${e.minutes} min · ${e.kcal} kcal <b data-actdel="${e.id}">✕</b></span>`).join('')}<div class="muted text-xs" style="margin-top:5px">Total: ${totMin} min · ~${totKcal} kcal</div></div>` : '<div class="muted text-xs" style="margin-top:10px">Elegí intensidad, poné los minutos y tocá la actividad. Ej: tenis 90 min intenso. (El gym lo registrás en su pestaña.)</div>'}
     </div>`;
   const blocks = trainingSuggestions();
   const sug = `<div class="card"><div class="card-title">Sugerencias de hoy · según lo que entrenaste</div>${blocks.map(b => `<div class="fit-sug-block"><div class="fit-sug-title">${b.title}</div>${b.items.map(it => `<div class="fit-sug-item"><span class="fit-sug-time">${escapeHtml(it.time)}</span><span>${escapeHtml(it.text)}</span></div>`).join('')}</div>`).join('')}</div>`;
@@ -831,7 +848,7 @@ function bodyComidas() {
       <button class="btn btn-primary btn-sm" id="ff-add">Guardar</button>
     </div>` : '';
   const mealsSorted = [...meals].sort((a, b) => (a.ts || 0) - (b.ts || 0));
-  const mealsList = mealsSorted.length ? mealsSorted.map(m => `<div class="fit-meal"><span class="fit-meal-time">${m.ts ? fmtTime(m.ts) : '—'}</span><span class="fit-meal-name">${m.emoji || '🍽️'} ${escapeHtml(m.name)}</span><span class="muted text-xs">${m.kcal} kcal · ${m.protein} g</span><button class="btn btn-ghost btn-sm" data-del-meal="${m.id}">✕</button></div>`).join('') : '<div class="muted text-xs">Tocá un alimento arriba para sumarlo al día.</div>';
+  const mealsList = mealsSorted.length ? mealsSorted.map(m => `<div class="fit-meal"><input type="time" class="fit-time-edit fit-meal-time" data-mealtime="${m.id}" value="${m.ts ? fmtTime(m.ts) : ''}"><span class="fit-meal-name">${m.emoji || '🍽️'} ${escapeHtml(m.name)}</span><span class="muted text-xs">${m.kcal} kcal · ${m.protein} g</span><button class="btn btn-ghost btn-sm" data-del-meal="${m.id}">✕</button></div>`).join('') : '<div class="muted text-xs">Tocá un alimento arriba para sumarlo al día.</div>';
   const totals = tDay ? `<div class="fit-prog-row"><span>Hoy</span><strong>${num(today.calories)} / ${tDay.target} kcal · ${num(today.protein)} / ${tDay.protein} g prot</strong></div>${bar(num(today.calories), tDay.target, 'var(--accent)')}${tDay.exercise > 0 ? `<div class="muted text-xs" style="margin-top:3px">Base ${tDay.baseTarget} + ${tDay.exercise} kcal de ejercicio de hoy</div>` : ''}` : `<div class="fit-prog-row"><span>Hoy</span><strong>${num(today.calories)} kcal · ${num(today.protein)} g prot</strong></div>`;
 
   const pickCard = `<div class="card"><div class="row" style="justify-content:space-between;align-items:center"><div class="card-title" style="margin:0">Elegí lo que comiste</div><button class="btn btn-ghost btn-sm" id="fit-food-toggle">${showFoodForm ? 'Cerrar' : '+ Alimento propio'}</button></div>${customForm}${grid}</div>`;
@@ -858,12 +875,73 @@ function bodyComidas() {
   return pickCard + dayCard + optCard + manual;
 }
 
+// ---- Lectura de captura de balanza (Zepp Life u otra) por OCR en el navegador ----
+// Gratis y 100% local: carga Tesseract.js desde CDN sólo cuando se usa.
+async function ensureTesseract() {
+  if (window.Tesseract) return window.Tesseract;
+  await new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    s.onload = res;
+    s.onerror = () => rej(new Error('No se pudo cargar el lector OCR (¿hay internet?).'));
+    document.head.appendChild(s);
+  });
+  return window.Tesseract;
+}
+
+const _norm = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+const MONTHS_ES = { enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12 };
+
+// Convierte el texto OCR de una captura tipo Zepp Life en campos de pesaje.
+function parseZepp(rawText) {
+  const text = (rawText || '').replace(/,/g, '.');          // coma decimal -> punto
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const out = {};
+  const firstNum = (str) => { const m = String(str).match(/-?\d+(?:\.\d+)?/); return m ? parseFloat(m[0]) : null; };
+  // Campos con etiqueta (cada uno en su línea en la app)
+  for (const line of lines) {
+    const n = _norm(line);
+    const v = firstNum(line);
+    if (v == null) continue;
+    if (n.includes('grasa corporal')) out.bodyFatPct = v;
+    else if (n.includes('visceral')) out.visceralFat = Math.round(v);
+    else if (n.includes('musculo')) out.muscleKg = v;
+    else if (n.includes('agua')) out.bodyWaterPct = v;
+    else if (n.includes('proteina')) out.proteinPct = v;
+    else if (n.includes('osea') || n.includes('masa os')) out.boneKg = v;
+    else if (n.includes('metabolismo') || n.includes('basal')) out.bmr = Math.round(v);
+    else if (n.includes('imc') || n.includes('bmi')) out.bmi = v;
+  }
+  // Peso: línea con "kg" que NO sea músculo/ósea/progreso, valor plausible 25–300
+  for (const line of lines) {
+    const n = _norm(line);
+    if (!/kg/.test(n)) continue;
+    if (n.includes('musculo') || n.includes('osea') || n.includes('masa os') || n.includes('progreso')) continue;
+    const v = firstNum(line);
+    if (v != null && v >= 25 && v <= 300) { out.kg = v; break; }
+  }
+  // Fecha: "24 de junio ..."
+  const dm = _norm(text).match(/(\d{1,2})\s+de\s+([a-z]+)/);
+  if (dm && MONTHS_ES[dm[2]]) {
+    const year = new Date().getFullYear();
+    out.date = `${year}-${String(MONTHS_ES[dm[2]]).padStart(2, '0')}-${String(+dm[1]).padStart(2, '0')}`;
+  }
+  return out;
+}
+
 function bodyPeso() {
   const f = F(), tr = trend(), list = [...(f.weighIns || [])].sort((a, b) => a.date < b.date ? 1 : -1);
   const rate = (tr.ratePerWeek == null || !tr.reliable) ? 'midiendo…' : `${tr.ratePerWeek >= 0 ? '+' : ''}${tr.ratePerWeek.toFixed(2)} kg/sem`;
   const form = `<div class="card"><div class="card-title">Nuevo pesaje</div>
-      <div class="row gap-6 fit-quick"><input type="date" class="input" id="fit-w-date" value="${tk()}"><input type="number" step="0.1" class="input" id="fit-w-kg" placeholder="kg"><input type="number" step="0.1" class="input" id="fit-w-bf" placeholder="% grasa"><input type="number" step="0.1" class="input" id="fit-w-muscle" placeholder="músculo kg"><button class="btn btn-primary" id="fit-w-save">Agregar</button></div>
-      <div class="muted text-xs" style="margin-top:8px">Pesate cada 2–3 días, a la mañana en ayunas. % grasa y músculo son opcionales (balanza inteligente) y alimentan los reportes. <b>Truco:</b> mandame la captura de tu balanza (Zepp Life u otra) por acá y lo cargo yo con todos los datos.</div></div>`;
+      <div class="row gap-6" style="margin-bottom:10px;align-items:center">
+        <input type="file" id="fit-w-photo" accept="image/*" style="display:none">
+        <button class="btn btn-secondary" id="fit-w-photo-btn" type="button">📷 Cargar desde captura (Zepp Life)</button>
+        <span id="fit-w-ocr-status" class="muted text-xs"></span>
+      </div>
+      <div class="row gap-6 fit-quick"><input type="date" class="input" id="fit-w-date" value="${tk()}"><input type="number" step="0.1" class="input" id="fit-w-kg" placeholder="kg"><input type="number" step="0.1" class="input" id="fit-w-bf" placeholder="% grasa"><input type="number" step="0.1" class="input" id="fit-w-muscle" placeholder="músculo kg"></div>
+      <div class="row gap-6 fit-quick" style="margin-top:6px"><input type="number" step="0.1" class="input" id="fit-w-water" placeholder="% agua"><input type="number" step="0.1" class="input" id="fit-w-protein" placeholder="% proteína"><input type="number" step="0.01" class="input" id="fit-w-bone" placeholder="masa ósea kg"><input type="number" step="1" class="input" id="fit-w-visceral" placeholder="grasa visceral"><input type="number" step="1" class="input" id="fit-w-bmr" placeholder="metab. basal"><input type="number" step="0.1" class="input" id="fit-w-bmi" placeholder="IMC"></div>
+      <div class="row" style="margin-top:8px"><button class="btn btn-primary" id="fit-w-save">Agregar</button></div>
+      <div class="muted text-xs" style="margin-top:8px">Pesate cada 2–3 días, a la mañana en ayunas. <b>📷 Atajo:</b> subí la captura de Zepp Life y se completan los campos solos — revisalos y tocá Agregar. También podés cargar todo a mano (% grasa, músculo y los demás son opcionales).</div></div>`;
   const w = effectiveWeight(), lo = w * 0.0025, hi = w * 0.005;
   let rateNote = '', rateLvl = 'info';
   if (tr.ratePerWeek != null && !tr.reliable) {
@@ -1184,9 +1262,12 @@ function wire(root) {
   $('#fit-med-reset')?.addEventListener('click', () => saveDay(k, { meditationMin: 0 }));
   all('[data-caf]').forEach(b => b.addEventListener('click', () => addCaffeine(k, b.dataset.caf)));
   all('[data-cafdel]').forEach(b => b.addEventListener('click', () => removeCaffeine(k, b.dataset.cafdel)));
+  all('[data-caftime]').forEach(i => i.addEventListener('change', () => editCaffeineTime(k, i.dataset.caftime, i.value)));
   all('[data-inten]').forEach(b => b.addEventListener('click', () => { actIntensity = b.dataset.inten; renderFitness(root); }));
   all('[data-act]').forEach(b => b.addEventListener('click', () => { const min = num(root.querySelector('#fit-act-min')?.value, 0); logMovement(k, b.dataset.act, min); }));
   all('[data-actdel]').forEach(b => b.addEventListener('click', () => removeMovement(k, b.dataset.actdel)));
+  all('[data-acttime]').forEach(i => i.addEventListener('change', () => editActivityTime(k, i.dataset.acttime, i.value)));
+  all('[data-mealtime]').forEach(i => i.addEventListener('change', () => editMealTime(k, i.dataset.mealtime, i.value)));
   all('[data-sup]').forEach(c => c.addEventListener('change', () => patchSup(k, c.dataset.sup, c.checked)));
   $('#fit-bowel-open')?.addEventListener('click', () => { showBowel = !showBowel; renderFitness(root); });
   $('#fit-bowel-add')?.addEventListener('click', () => addBowel(k, null));
@@ -1215,11 +1296,49 @@ function wire(root) {
   $('#fit-c-date')?.addEventListener('change', (e) => { comidaDate = e.target.value; renderFitness(root); });
   $('#fit-c-save')?.addEventListener('click', () => { const date = $('#fit-c-date').value || k; saveDay(date, { calories: num($('#fit-c-cal').value), protein: num($('#fit-c-prot').value) }); comidaDate = null; });
 
-  // Peso
+  // Peso — guardar (incluye campos extra de la balanza si están)
   $('#fit-w-save')?.addEventListener('click', () => {
-    const date = $('#fit-w-date').value || k, kg = num($('#fit-w-kg').value), bf = $('#fit-w-bf').value, mus = $('#fit-w-muscle').value;
+    const g = (id) => { const el = $('#fit-w-' + id); return el ? el.value : ''; };
+    const date = $('#fit-w-date').value || k, kg = num(g('kg'));
     if (!kg) return;
-    mutate(s => { s.fitness.weighIns = (s.fitness.weighIns || []).filter(w => w.date !== date); s.fitness.weighIns.push({ id: uid(), date, kg, bodyFatPct: bf ? num(bf) : null, muscleKg: mus ? num(mus) : null }); });
+    const optNum = (v) => (v !== '' && v != null) ? num(v) : null;
+    const entry = { id: uid(), date, kg,
+      bodyFatPct: optNum(g('bf')), muscleKg: optNum(g('muscle')),
+      bodyWaterPct: optNum(g('water')), proteinPct: optNum(g('protein')),
+      boneKg: optNum(g('bone')), visceralFat: optNum(g('visceral')),
+      bmr: optNum(g('bmr')), bmi: optNum(g('bmi')) };
+    if (weighFromPhoto) entry.source = 'Zepp Life';
+    Object.keys(entry).forEach(key => entry[key] === null && delete entry[key]);
+    mutate(s => { s.fitness.weighIns = (s.fitness.weighIns || []).filter(w => w.date !== date); s.fitness.weighIns.push(entry); });
+    weighFromPhoto = false;
+  });
+
+  // Peso — cargar desde captura (OCR en el navegador)
+  $('#fit-w-photo-btn')?.addEventListener('click', () => $('#fit-w-photo')?.click());
+  $('#fit-w-photo')?.addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    const status = $('#fit-w-ocr-status');
+    const setStatus = (t) => { if (status) status.textContent = t; };
+    if (!file) return;
+    weighFromPhoto = false;
+    try {
+      setStatus('Leyendo la captura… (puede tardar unos segundos la 1ª vez)');
+      const T = await ensureTesseract();
+      const { data: { text } } = await T.recognize(file, 'spa+eng');
+      const p = parseZepp(text);
+      const setVal = (id, val) => { const el = $('#fit-w-' + id); if (el && val != null) el.value = val; };
+      if (p.date) setVal('date', p.date);
+      setVal('kg', p.kg); setVal('bf', p.bodyFatPct); setVal('muscle', p.muscleKg);
+      setVal('water', p.bodyWaterPct); setVal('protein', p.proteinPct); setVal('bone', p.boneKg);
+      setVal('visceral', p.visceralFat); setVal('bmr', p.bmr); setVal('bmi', p.bmi);
+      const got = ['kg', 'bodyFatPct', 'muscleKg', 'bodyWaterPct', 'proteinPct', 'boneKg', 'visceralFat', 'bmr', 'bmi'].filter(key => p[key] != null).length;
+      if (p.kg) { weighFromPhoto = true; setStatus(`✓ Leí ${got} dato(s). Revisalos y tocá Agregar.`); }
+      else setStatus('No pude leer el peso. Cargalo a mano o probá una captura más nítida.');
+    } catch (err) {
+      setStatus('⚠️ ' + (err && err.message ? err.message : 'No se pudo procesar la imagen.'));
+    } finally {
+      e.target.value = ''; // permite volver a subir la misma foto
+    }
   });
   all('[data-del-weight]').forEach(b => b.addEventListener('click', () => { const id = b.dataset.delWeight; mutate(s => { s.fitness.weighIns = (s.fitness.weighIns || []).filter(w => w.id !== id); }); }));
 
