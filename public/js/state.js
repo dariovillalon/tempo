@@ -161,6 +161,7 @@ export const defaultFoodLibrary = () => ([
   { id: 'u_flan_proteico',       emoji: '🍮', name: 'Flan proteico casero (1/6)',                          kcal: 186, protein: 19, group: 'Desayuno / Merienda' },
   { id: 'u_frutos_secos',        emoji: '🥜', name: 'Puñado de frutos secos (30g)',                        kcal: 155, protein: 5,  group: 'Desayuno / Merienda' },
   { id: 'u_chocoarroz_limon',    emoji: '🍫', name: 'ChocoArroz alfajor limón (1u)',                       kcal: 99,  protein: 1,  group: 'Desayuno / Merienda' },
+  { id: 'u_yogur_proteico_frutos', emoji: '🥣', name: 'Yogur griego proteico (~200g) + frutos secos BEEPURE', kcal: 320, protein: 26, group: 'Desayuno / Merienda' },
   // ----- Almuerzo / Cena -----
   { id: 'u_milanesas_pure',      emoji: '🍗', name: 'Almuerzo: 2 milanesas pollo + queso protein + puré calabaza/papa', kcal: 700, protein: 64, group: 'Almuerzo / Cena' },
   { id: 'u_chicken_poke',        emoji: '🥗', name: 'Chicken Poke (arroz, pollo teriyaki, palta, maíz, veggies)',       kcal: 930, protein: 40, group: 'Almuerzo / Cena' },
@@ -173,7 +174,7 @@ export const defaultFoodLibrary = () => ([
 
 // Versión de la biblioteca curada. Subir este número fuerza un reemplazo de la
 // lista vieja (genérica) por la nueva en la próxima carga, una sola vez.
-export const FOOD_LIBRARY_VERSION = 4;
+export const FOOD_LIBRARY_VERSION = 5;
 
 export const defaultFitness = () => ({
   profile: { sex: 'male', age: 30, heightCm: 175, weightKg: 75, activity: 'moderate', goal: 'gain', proteinPerKg: 1.8, surplusPct: 12 },
