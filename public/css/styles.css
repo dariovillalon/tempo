@@ -3069,6 +3069,8 @@ body.focus-on { overflow: hidden; }
 .day-block { background: var(--surface-1); border: 1px solid var(--border); border-left: 3px solid var(--text-3); border-radius: var(--radius); padding: 12px; }
 .day-block.kind-meeting { border-left-color: var(--violet); }
 .day-block.kind-work { border-left-color: var(--accent); }
+.day-block.kind-bienestar { border-left-color: var(--green); }
+.day-block.kind-aprender { border-left-color: var(--blue); }
 .day-block-top { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
 .day-block .db-f { width: 102px; flex: none; }
 .day-block .db-title { width: 100%; font-weight: 600; margin-bottom: 6px; }

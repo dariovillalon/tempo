@@ -10,6 +10,15 @@ import { router } from '../router.js';
 let dayAnchor = null;
 const expandedBlocks = new Set(); // bloques expandidos (por defecto colapsados)
 
+// Tipos de bloque de la agenda. Pomodoro habilitado para trabajo y aprender.
+const KIND_EMOJI = { work: '💼', meeting: '📅', bienestar: '🧘', aprender: '📚' };
+const KIND_POMO = new Set(['work', 'aprender']);
+const kindOptions = (kind) => `
+  <option value="work" ${kind === 'work' ? 'selected' : ''}>💼 Trabajo</option>
+  <option value="meeting" ${kind === 'meeting' ? 'selected' : ''}>📅 Reunión</option>
+  <option value="bienestar" ${kind === 'bienestar' ? 'selected' : ''}>🧘 Bienestar</option>
+  <option value="aprender" ${kind === 'aprender' ? 'selected' : ''}>📚 Aprender</option>`;
+
 // Compatibilidad: la agenda ya no usa calendarios externos (Google), pero settings.js
 // todavía importa esto. Lo dejamos como no-op para no romper nada.
 export const invalidateCalendarCache = () => {};
@@ -27,7 +36,7 @@ export const renderCalendar = (root) => {
   const blockRow = (b) => {
     const kind = b.kind || 'work';
     const open = expandedBlocks.has(b.id);
-    const kindEmoji = kind === 'meeting' ? '📅' : '💼';
+    const kindEmoji = KIND_EMOJI[kind] || '💼';
     if (!open) {
       return `<div class="day-block kind-${kind}">
         <div class="day-block-line">
@@ -35,7 +44,7 @@ export const renderCalendar = (root) => {
           <span class="db-time-lbl">${escapeHtml(b.start || '--:--')}–${escapeHtml(b.end || '--:--')}</span>
           <span class="db-line-title">${kindEmoji} ${escapeHtml(b.title || '(sin título)')}</span>
           ${b.notes ? '<span class="db-note-dot" title="Tiene notas">📝</span>' : ''}
-          ${kind === 'work' ? `<button class="btn btn-secondary btn-sm" data-pomo="${b.id}" title="Lanzar pomodoro">▶</button>` : ''}
+          ${KIND_POMO.has(kind) ? `<button class="btn btn-secondary btn-sm" data-pomo="${b.id}" title="Lanzar pomodoro">▶</button>` : ''}
           <button class="btn btn-ghost btn-sm" data-bdel="${b.id}" title="Eliminar">✕</button>
         </div>
       </div>`;
@@ -46,11 +55,8 @@ export const renderCalendar = (root) => {
         <input type="time" class="input db-f" data-bid="${b.id}" data-f="start" value="${b.start || ''}">
         <span class="db-dash">–</span>
         <input type="time" class="input db-f" data-bid="${b.id}" data-f="end" value="${b.end || ''}">
-        <select class="select db-kind" data-bid="${b.id}">
-          <option value="work" ${kind === 'work' ? 'selected' : ''}>💼 Trabajo</option>
-          <option value="meeting" ${kind === 'meeting' ? 'selected' : ''}>📅 Reunión</option>
-        </select>
-        ${kind === 'work' ? `<button class="btn btn-secondary btn-sm" data-pomo="${b.id}" title="Lanzar pomodoro para este bloque">▶ Pomodoro</button>` : ''}
+        <select class="select db-kind" data-bid="${b.id}">${kindOptions(kind)}</select>
+        ${KIND_POMO.has(kind) ? `<button class="btn btn-secondary btn-sm" data-pomo="${b.id}" title="Lanzar pomodoro para este bloque">▶ Pomodoro</button>` : ''}
         <button class="btn btn-ghost btn-sm" data-bdel="${b.id}" title="Eliminar">✕</button>
       </div>
       <input type="text" class="input db-title" data-bid="${b.id}" value="${escapeHtml(b.title || '')}" placeholder="Título…">
@@ -72,10 +78,7 @@ export const renderCalendar = (root) => {
         <input type="time" class="input" id="db-new-start" style="width:108px" title="Inicio">
         <span class="db-dash">–</span>
         <input type="time" class="input" id="db-new-end" style="width:108px" title="Fin">
-        <select class="select" id="db-new-kind" style="width:140px">
-          <option value="work">💼 Trabajo</option>
-          <option value="meeting">📅 Reunión</option>
-        </select>
+        <select class="select" id="db-new-kind" style="width:140px">${kindOptions('work')}</select>
         <input type="text" class="input" id="db-new-title" placeholder="Reunión o bloque de trabajo…" style="flex:1;min-width:180px">
         <button class="btn btn-primary" id="db-add">+ Agregar</button>
       </div>
