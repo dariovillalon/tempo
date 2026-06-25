@@ -168,11 +168,12 @@ export const defaultFoodLibrary = () => ([
   { id: 'u_hojas_verdes',        emoji: '🥬', name: 'Hojas verdes (kale, acelga, remolacha)',              kcal: 30,  protein: 2,  group: 'Almuerzo / Cena' },
   { id: 'u_papas_fritas',        emoji: '🍟', name: 'Papas fritas (porción chica)',                        kcal: 300, protein: 4,  group: 'Almuerzo / Cena' },
   { id: 'u_tarta_pollo_porcion', emoji: '🥧', name: 'Tarta de pollo, huevo y verduras (1 porción)',        kcal: 250, protein: 14, group: 'Almuerzo / Cena' },
+  { id: 'u_sushi_combo_wind_15', emoji: '🍣', name: 'Sushi Combo Wind (15 piezas, langostino/salmón)',     kcal: 900, protein: 38, group: 'Almuerzo / Cena' },
 ]);
 
 // Versión de la biblioteca curada. Subir este número fuerza un reemplazo de la
 // lista vieja (genérica) por la nueva en la próxima carga, una sola vez.
-export const FOOD_LIBRARY_VERSION = 3;
+export const FOOD_LIBRARY_VERSION = 4;
 
 export const defaultFitness = () => ({
   profile: { sex: 'male', age: 30, heightCm: 175, weightKg: 75, activity: 'moderate', goal: 'gain', proteinPerKg: 1.8, surplusPct: 12 },
