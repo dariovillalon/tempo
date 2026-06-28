@@ -2,7 +2,7 @@
 // (objetivo: sumar masa muscular + rendir en tenis)
 
 import { state, mutate, ACTIVITY_FACTORS, defaultFitnessPlan } from '../state.js';
-import { todayKey, uid, escapeHtml, addDays } from '../utils.js';
+import { todayKey, uid, escapeHtml, addDays, fromKey } from '../utils.js';
 
 // ---- UI state (sobrevive re-renders) ----
 let tab = 'resumen';
@@ -21,6 +21,8 @@ let weighFromPhoto = false;       // el último pesaje se prellenó desde una ca
 const F = () => state.fitness;
 const num = (v, d = 0) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d; };
 const tk = () => todayKey();
+// Día activo de la pestaña Comidas (null = hoy). Permite ver/editar cualquier día.
+const ck = () => comidaDate || tk();
 // Hora de dormir (24 = medianoche, 25 = 01:00). De acá salen la rutina nocturna y el corte de cafeína.
 const bedtimeHour = () => num(F().profile?.bedtimeHour, 24);
 const hhmm = (h) => { const hh = (((Math.floor(h) % 24) + 24) % 24); const mm = Math.round((h - Math.floor(h)) * 60); return String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0'); };
@@ -186,11 +188,13 @@ function cycleSore(region) {
   mutate(s => { const d = s.fitness.days[k] || (s.fitness.days[k] = {}); d.soreness = d.soreness || {}; const lvl = (d.soreness[region] || 0); const nx = (lvl + 1) % 4; if (nx === 0) delete d.soreness[region]; else d.soreness[region] = nx; });
 }
 function addFood(f) {
-  const k = tk();
-  mutate(s => { const d = s.fitness.days[k] || (s.fitness.days[k] = {}); d.meals = d.meals || []; d.meals.push({ id: uid(), name: f.name, emoji: f.emoji || '', kcal: num(f.kcal), protein: num(f.protein), ts: Date.now() }); d.calories = num(d.calories) + num(f.kcal); d.protein = num(d.protein) + num(f.protein); });
+  const k = ck();
+  // Si cargás un día pasado, el horario por defecto es el mediodía de ese día (no la hora actual).
+  const ts = (k === tk()) ? Date.now() : fromKey(k).getTime() + 12 * 3600 * 1000;
+  mutate(s => { const d = s.fitness.days[k] || (s.fitness.days[k] = {}); d.meals = d.meals || []; d.meals.push({ id: uid(), name: f.name, emoji: f.emoji || '', kcal: num(f.kcal), protein: num(f.protein), ts }); d.calories = num(d.calories) + num(f.kcal); d.protein = num(d.protein) + num(f.protein); });
 }
 function removeMeal(id) {
-  const k = tk();
+  const k = ck();
   mutate(s => { const d = s.fitness.days[k]; if (!d || !d.meals) return; const m = d.meals.find(x => x.id === id); if (!m) return; d.meals = d.meals.filter(x => x.id !== id); d.calories = Math.max(0, num(d.calories) - num(m.kcal)); d.protein = Math.max(0, num(d.protein) - num(m.protein)); });
 }
 
@@ -461,6 +465,9 @@ function recommendations() {
 
 // ---- charts ----
 const fmtDay = (key) => { if (!key) return ''; const [, m, d] = key.split('-'); return `${d}/${m}`; };
+// Etiqueta legible de un día: "sáb 27/06" (con día de la semana).
+const _WD_ES = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+const fmtDayName = (key) => { if (!key) return ''; return `${_WD_ES[fromKey(key).getDay()]} ${fmtDay(key)}`; };
 function chartLine(series, opts = {}) {
   const pts = series.filter(s => Number.isFinite(s.value));
   if (pts.length < 2) return '<div class="muted text-xs">Pocos datos todavía (cargá al menos 2).</div>';
@@ -832,7 +839,9 @@ function bodyDieta() {
 }
 
 function bodyComidas() {
-  const f = F(), k = tk(), today = getDay(k), t = targets(f.profile), tDay = dayTargets(k);
+  const f = F(), k = ck(), today = getDay(k), t = targets(f.profile), tDay = dayTargets(k);
+  const isToday = (k === tk());
+  const dayLabel = isToday ? 'hoy' : fmtDayName(k);
   const meals = today.meals || [];
   const groups = [...new Set(f.foodLibrary.map(x => x.group))];
   const grid = groups.map(g => `
@@ -849,13 +858,24 @@ function bodyComidas() {
     </div>` : '';
   const mealsSorted = [...meals].sort((a, b) => (a.ts || 0) - (b.ts || 0));
   const mealsList = mealsSorted.length ? mealsSorted.map(m => `<div class="fit-meal"><input type="time" class="fit-time-edit fit-meal-time" data-mealtime="${m.id}" value="${m.ts ? fmtTime(m.ts) : ''}"><span class="fit-meal-name">${m.emoji || '🍽️'} ${escapeHtml(m.name)}</span><span class="muted text-xs">${m.kcal} kcal · ${m.protein} g</span><button class="btn btn-ghost btn-sm" data-del-meal="${m.id}">✕</button></div>`).join('') : '<div class="muted text-xs">Tocá un alimento arriba para sumarlo al día.</div>';
-  const totals = tDay ? `<div class="fit-prog-row"><span>Hoy</span><strong>${num(today.calories)} / ${tDay.target} kcal · ${num(today.protein)} / ${tDay.protein} g prot</strong></div>${bar(num(today.calories), tDay.target, 'var(--accent)')}${tDay.exercise > 0 ? `<div class="muted text-xs" style="margin-top:3px">Base ${tDay.baseTarget} + ${tDay.exercise} kcal de ejercicio de hoy</div>` : ''}` : `<div class="fit-prog-row"><span>Hoy</span><strong>${num(today.calories)} kcal · ${num(today.protein)} g prot</strong></div>`;
+  const totalsLabel = isToday ? 'Hoy' : fmtDayName(k);
+  const totals = tDay ? `<div class="fit-prog-row"><span>${totalsLabel}</span><strong>${num(today.calories)} / ${tDay.target} kcal · ${num(today.protein)} / ${tDay.protein} g prot</strong></div>${bar(num(today.calories), tDay.target, 'var(--accent)')}${tDay.exercise > 0 ? `<div class="muted text-xs" style="margin-top:3px">Base ${tDay.baseTarget} + ${tDay.exercise} kcal de ejercicio del día</div>` : ''}` : `<div class="fit-prog-row"><span>${totalsLabel}</span><strong>${num(today.calories)} kcal · ${num(today.protein)} g prot</strong></div>`;
 
+  // Navegador de día: ◀ ▶ + selector de fecha. Permite ver/cargar cualquier día.
+  const navCard = `<div class="card"><div class="row" style="justify-content:space-between;align-items:center;gap:10px;flex-wrap:nowrap">
+      <button class="btn btn-ghost btn-sm" id="fit-c-prev" title="Día anterior">◀</button>
+      <div class="row" style="align-items:center;gap:8px;justify-content:center;flex:1">
+        <input type="date" class="input" id="fit-c-nav" value="${k}" max="${tk()}" style="width:auto">
+        <span class="muted text-xs" style="white-space:nowrap">${isToday ? 'Hoy' : fmtDayName(k)}</span>
+      </div>
+      <button class="btn btn-ghost btn-sm" id="fit-c-next" title="Día siguiente" ${isToday ? 'disabled style="opacity:.4;pointer-events:none"' : ''}>▶</button>
+      <button class="btn btn-secondary btn-sm" id="fit-c-today" ${isToday ? 'disabled style="opacity:.4;pointer-events:none"' : ''}>Hoy</button>
+    </div>${isToday ? '' : `<div class="muted text-xs" style="margin-top:6px">Estás viendo el ${fmtDayName(k)}. Lo que toques o borres se guarda en ese día.</div>`}</div>`;
   const pickCard = `<div class="card"><div class="row" style="justify-content:space-between;align-items:center"><div class="card-title" style="margin:0">Elegí lo que comiste</div><button class="btn btn-ghost btn-sm" id="fit-food-toggle">${showFoodForm ? 'Cerrar' : '+ Alimento propio'}</button></div>${customForm}${grid}</div>`;
-  const dayCard = `<div class="card"><div class="card-title">Comidas de hoy</div>${totals}<div class="fit-meals" style="margin-top:10px">${mealsList}</div></div>`;
+  const dayCard = `<div class="card"><div class="card-title">Comidas de ${dayLabel}</div>${totals}<div class="fit-meals" style="margin-top:10px">${mealsList}</div></div>`;
 
-  // entrada manual para días pasados / ajuste
-  const date = comidaDate || k; const cur = getDay(date);
+  // entrada manual para días pasados / ajuste (sigue el día que estés viendo)
+  const date = k; const cur = getDay(date);
   const manual = `<div class="card"><div class="card-title">Ajuste manual / día anterior</div>
       <div class="field-row">
         <div class="field"><label>Fecha</label><input type="date" class="input" id="fit-c-date" value="${date}"></div>
@@ -872,7 +892,7 @@ function bodyComidas() {
       <div class="fit-rec-item info">Solés quedar corto de lácteos y fruta/verdura: apuntá a una fruta por comida y un lácteo proteico al día (yogur griego, ricota).</div>
       <div class="fit-rec-item info">¿Te cuesta llegar a las calorías? El batido (leche + banana + avena + maní + whey) son calorías líquidas fáciles. Lo cargué abajo en "Para sumar masa".</div>
     </div></div>`;
-  return pickCard + dayCard + optCard + manual;
+  return navCard + pickCard + dayCard + optCard + manual;
 }
 
 // ---- Lectura de captura de balanza (Zepp Life u otra) por OCR en el navegador ----
@@ -1267,7 +1287,7 @@ function wire(root) {
   all('[data-act]').forEach(b => b.addEventListener('click', () => { const min = num(root.querySelector('#fit-act-min')?.value, 0); logMovement(k, b.dataset.act, min); }));
   all('[data-actdel]').forEach(b => b.addEventListener('click', () => removeMovement(k, b.dataset.actdel)));
   all('[data-acttime]').forEach(i => i.addEventListener('change', () => editActivityTime(k, i.dataset.acttime, i.value)));
-  all('[data-mealtime]').forEach(i => i.addEventListener('change', () => editMealTime(k, i.dataset.mealtime, i.value)));
+  all('[data-mealtime]').forEach(i => i.addEventListener('change', () => editMealTime(ck(), i.dataset.mealtime, i.value)));
   all('[data-sup]').forEach(c => c.addEventListener('change', () => patchSup(k, c.dataset.sup, c.checked)));
   $('#fit-bowel-open')?.addEventListener('click', () => { showBowel = !showBowel; renderFitness(root); });
   $('#fit-bowel-add')?.addEventListener('click', () => addBowel(k, null));
@@ -1293,8 +1313,14 @@ function wire(root) {
     mutate(s => { s.fitness.foodLibrary.push({ id: 'u_' + uid(), emoji: $('#ff-emoji').value.trim() || '🍽️', name, kcal, protein, group: 'Otros' }); });
     showFoodForm = false;
   });
-  $('#fit-c-date')?.addEventListener('change', (e) => { comidaDate = e.target.value; renderFitness(root); });
-  $('#fit-c-save')?.addEventListener('click', () => { const date = $('#fit-c-date').value || k; saveDay(date, { calories: num($('#fit-c-cal').value), protein: num($('#fit-c-prot').value) }); comidaDate = null; });
+  // Navegador de día (Comidas)
+  const goDay = (key) => { comidaDate = (!key || key >= tk()) ? null : key; renderFitness(root); };
+  $('#fit-c-prev')?.addEventListener('click', () => goDay(todayKey(addDays(fromKey(ck()), -1))));
+  $('#fit-c-next')?.addEventListener('click', () => goDay(todayKey(addDays(fromKey(ck()), 1))));
+  $('#fit-c-today')?.addEventListener('click', () => goDay(null));
+  $('#fit-c-nav')?.addEventListener('change', (e) => goDay(e.target.value));
+  $('#fit-c-date')?.addEventListener('change', (e) => { comidaDate = (e.target.value >= tk() ? null : e.target.value); renderFitness(root); });
+  $('#fit-c-save')?.addEventListener('click', () => { const date = $('#fit-c-date').value || k; saveDay(date, { calories: num($('#fit-c-cal').value), protein: num($('#fit-c-prot').value) }); comidaDate = (date >= tk() ? null : date); renderFitness(root); });
 
   // Peso — guardar (incluye campos extra de la balanza si están)
   $('#fit-w-save')?.addEventListener('click', () => {
