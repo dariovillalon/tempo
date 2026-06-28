@@ -11,7 +11,6 @@ let comidaDate = null;        // null = hoy
 let reportDays = 30;
 let bodyView = 'front';
 let showFoodForm = false;
-let exSort = 'recent';            // orden de la pestaña Ejercicios: 'recent' | 'az'
 let actIntensity = 'moderado';    // intensidad seleccionada para registrar actividad
 let editPlan = false;             // modo edición del plan de gym
 let showBowel = false;            // seguimiento de digestión (oculto por defecto)
@@ -1075,6 +1074,21 @@ function bodyGym() {
 // Resumen de un set en texto "60×12  60×11".
 const setsTxt = (sets) => sets.map(s => `${num(s.weight) ? s.weight : '–'}×${(s.reps != null && s.reps !== '') ? s.reps : '–'}`).join('  ');
 
+// Clasifica un ejercicio en un grupo muscular según su nombre. El orden de las reglas importa
+// (ej.: "jalón al pecho" es ESPALDA aunque diga "pecho"; se chequea antes que pecho).
+const MUSCLE_GROUPS = ['Piernas', 'Pecho', 'Espalda', 'Hombros', 'Brazos', 'Core', 'Otros'];
+function muscleGroup(name) {
+  const n = _norm(name);
+  const has = (...kw) => kw.some(k => n.includes(k));
+  if (has('plancha', 'pallof', 'lenador', 'anti-rot', 'antirot', 'rotacion', 'abdom', 'crunch', 'core', 'oblicuo')) return 'Core';
+  if (has('jalon', 'dominada', 'remo', 'pull over', 'pullover', 'pull-up', 'espalda', 'dorsal')) return 'Espalda';
+  if (has('militar', 'elevaciones laterales', 'lateral', 'vuelo', 'pajaro', 'deltoide', 'face pull', 'hombro', 'arnold')) return 'Hombros';
+  if (has('curl', 'bicep', 'tricep', 'soga', 'antebrazo')) return 'Brazos';
+  if (has('press banca', 'banca', 'press inclinado', 'inclinado', 'apertura', 'pec deck', 'pecho', 'flexion', 'fondos')) return 'Pecho';
+  if (has('sentadilla', 'prensa', 'leg press', 'cuadricep', 'isquio', 'femoral', 'aductor', 'abductor', 'gemelo', 'zancada', 'peso muerto', 'hip thrust', 'cadera', 'step', 'gluteo', 'pantorrilla')) return 'Piernas';
+  return 'Otros';
+}
+
 // Junta TODOS los ejercicios que hiciste alguna vez, con sus últimas sesiones (peso × reps).
 function exerciseSummaries() {
   const logs = [...(F().workoutLogs || [])].sort((a, b) => a.date < b.date ? 1 : -1); // recientes primero
@@ -1084,44 +1098,43 @@ function exerciseSummaries() {
       const sets = e.setLog || ((num(e.weight) || e.reps) ? [{ weight: e.weight, reps: e.reps }] : []);
       if (!sets.length) continue;
       const top = Math.max(0, ...sets.map(s => num(s.weight)));
-      if (!map.has(e.name)) map.set(e.name, { name: e.name, sessions: [], best: 0, count: 0 });
+      if (!map.has(e.name)) map.set(e.name, { name: e.name, group: muscleGroup(e.name), sessions: [], best: 0, count: 0 });
       const o = map.get(e.name);
       o.sessions.push({ date: l.date, txt: setsTxt(sets), top, nsets: sets.length });
       o.count++;
       if (top > o.best) o.best = top;
     }
   }
-  const list = [...map.values()];
-  if (exSort === 'az') list.sort((a, b) => a.name.localeCompare(b.name, 'es'));
-  else list.sort((a, b) => (a.sessions[0].date < b.sessions[0].date ? 1 : a.sessions[0].date > b.sessions[0].date ? -1 : a.name.localeCompare(b.name, 'es')));
-  return list;
+  // Dentro de cada grupo, los más recientes primero.
+  return [...map.values()].sort((a, b) => (a.sessions[0].date < b.sessions[0].date ? 1 : a.sessions[0].date > b.sessions[0].date ? -1 : a.name.localeCompare(b.name, 'es')));
 }
 
-// Pestaña "Ejercicios": catálogo plano de todo lo que entrenaste, con el peso/reps de las últimas veces.
+// Pestaña "Ejercicios": catálogo por grupo muscular de todo lo que entrenaste, con peso/reps de las últimas veces.
 function bodyEjercicios() {
   const list = exerciseSummaries();
   if (!list.length) {
     return `<div class="card"><div class="card-title">Mis ejercicios</div><div class="muted text-xs">Todavía no registraste ninguna sesión. Cargá entrenos en la pestaña <strong>Gym</strong> y acá vas a ver todos los ejercicios con el peso de la última vez.</div></div>`;
   }
   const head = `<div class="card"><div class="card-title">Mis ejercicios <span class="muted text-xs">· ${list.length} en total</span></div>
-    <div class="muted text-xs" style="margin-bottom:8px">Todo lo que entrenaste alguna vez, con el peso × reps de las últimas veces. La primera línea de cada uno es la más reciente.</div>
-    <div class="row gap-6" style="align-items:center;flex-wrap:wrap">
-      <input type="text" class="input" id="fit-ex-search" placeholder="Buscar ejercicio…" style="flex:1;min-width:160px">
-      <div class="fit-period" style="margin:0">
-        <button class="fit-day-tab ${exSort === 'recent' ? 'active' : ''}" data-exsort="recent">Recientes</button>
-        <button class="fit-day-tab ${exSort === 'az' ? 'active' : ''}" data-exsort="az">A–Z</button>
-      </div>
-    </div></div>`;
-  const cards = list.map(o => {
+    <div class="muted text-xs" style="margin-bottom:8px">Ordenados por grupo muscular. El número grande en color es tu <strong>peso máximo</strong> en ese ejercicio; la primera línea de cada uno es la sesión más reciente.</div>
+    <input type="text" class="input" id="fit-ex-search" placeholder="Buscar ejercicio…" style="width:100%"></div>`;
+  const exCard = (o) => {
     const recent = o.sessions.slice(0, 4);
     const rows = recent.map((s, i) => `<div class="fit-log-ex"><span class="fit-log-exn" style="min-width:54px">${fmtDay(s.date)}</span> <strong>${s.nsets} ser</strong> <span class="muted">${escapeHtml(s.txt)}</span>${i === 0 ? ' <span class="muted text-xs">· última</span>' : ''}</div>`).join('');
     const more = o.count > recent.length ? `<div class="muted text-xs" style="margin-top:4px">…y ${o.count - recent.length} sesión(es) más</div>` : '';
+    const pr = o.best > 0 ? `<span class="fit-ex-pr" style="float:right;color:var(--accent);font-weight:800;font-size:1.05em">🏆 ${o.best} kg</span>` : '';
     return `<div class="fit-log" data-exname="${escapeHtml(o.name.toLowerCase())}">
-      <div class="fit-log-head"><strong>${escapeHtml(o.name)}</strong>${o.best > 0 ? `<span class="muted text-xs" style="float:right">tope ${o.best} kg</span>` : ''}</div>
+      <div class="fit-log-head"><strong>${escapeHtml(o.name)}</strong>${pr}</div>
       <div class="fit-log-body">${rows}${more}</div>
     </div>`;
+  };
+  // Agrupar por grupo muscular, en el orden definido.
+  const sections = MUSCLE_GROUPS.map(g => {
+    const items = list.filter(o => o.group === g);
+    if (!items.length) return '';
+    return `<div class="card" data-exsection="${g}"><div class="card-title">${g} <span class="muted text-xs">· ${items.length}</span></div><div class="fit-logs">${items.map(exCard).join('')}</div></div>`;
   }).join('');
-  return head + `<div class="card"><div class="fit-logs" id="fit-ex-list">${cards}</div><div class="muted text-xs" id="fit-ex-empty" style="display:none">Ningún ejercicio coincide con la búsqueda.</div></div>`;
+  return head + sections + `<div class="card" id="fit-ex-empty" style="display:none"><div class="muted text-xs">Ningún ejercicio coincide con la búsqueda.</div></div>`;
 }
 
 function bodyReportes() {
@@ -1474,12 +1487,12 @@ function wire(root) {
   });
   all('[data-del-log]').forEach(b => b.addEventListener('click', () => { const id = b.dataset.delLog; mutate(s => { s.fitness.workoutLogs = (s.fitness.workoutLogs || []).filter(l => l.id !== id); }); }));
 
-  // Ejercicios
-  all('[data-exsort]').forEach(b => b.addEventListener('click', () => { exSort = b.dataset.exsort; renderFitness(root); }));
+  // Ejercicios — buscador (filtra sin re-render para no perder el foco)
   $('#fit-ex-search')?.addEventListener('input', (e) => {
     const q = e.target.value.trim().toLowerCase();
     let shown = 0;
     all('[data-exname]').forEach(card => { const hit = card.dataset.exname.includes(q); card.style.display = hit ? '' : 'none'; if (hit) shown++; });
+    all('[data-exsection]').forEach(sec => { const any = Array.from(sec.querySelectorAll('[data-exname]')).some(c => c.style.display !== 'none'); sec.style.display = any ? '' : 'none'; });
     const empty = $('#fit-ex-empty'); if (empty) empty.style.display = shown ? 'none' : '';
   });
 
