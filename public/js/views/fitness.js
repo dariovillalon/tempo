@@ -3,6 +3,7 @@
 
 import { state, mutate, ACTIVITY_FACTORS, defaultFitnessPlan } from '../state.js';
 import { todayKey, uid, escapeHtml, addDays, fromKey } from '../utils.js';
+import { toast } from '../components/toast.js';
 
 // ---- UI state (sobrevive re-renders) ----
 let tab = 'resumen';
@@ -20,6 +21,8 @@ let weighFromPhoto = false;       // el último pesaje se prellenó desde una ca
 
 const F = () => state.fitness;
 const num = (v, d = 0) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d; };
+// Validación simple de rango para entradas numéricas del usuario.
+const inRange = (v, lo, hi) => Number.isFinite(v) && v >= lo && v <= hi;
 const tk = () => todayKey();
 // Día activo de la pestaña Comidas (null = hoy). Permite ver/editar cualquier día.
 const ck = () => comidaDate || tk();
@@ -133,6 +136,9 @@ function caffeineFluidMl(dayKey) {
   return log.reduce((a, e) => a + ((CAFFEINE[e.type] && CAFFEINE[e.type].ml) || 0), 0);
 }
 const nowHM = () => { const d = new Date(); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+// Epoch (ms) local para una hora dada de un día 'YYYY-MM-DD'. Usa fromKey() (constructor Y/M/D,
+// siempre hora local) en vez de parsear strings de fecha, que en motores viejos se interpretan como UTC.
+const tsFor = (dayKey, hh = 12, mm = 0) => { const d = fromKey(dayKey); d.setHours(hh, mm, 0, 0); return d.getTime(); };
 function addCaffeine(date, type) {
   const c = CAFFEINE[type]; if (!c) return;
   mutate(s => { const d = s.fitness.days[date] || (s.fitness.days[date] = {}); d.caffeineLog = d.caffeineLog || []; d.caffeineLog.push({ id: uid(), type, label: c.label, mg: c.mg, time: nowHM() }); d.caffeineMg = (d.caffeineLog).reduce((a, e) => a + num(e.mg), 0); });
@@ -164,8 +170,7 @@ function editMealTime(date, id, time) {
     const d = s.fitness.days[date]; if (!d || !d.meals) return;
     const m = d.meals.find(x => x.id === id); if (!m || !time) return;
     const [hh, mm] = time.split(':');
-    const dt = new Date(date + 'T00:00:00'); dt.setHours(+hh || 0, +mm || 0, 0, 0);
-    m.ts = dt.getTime();
+    m.ts = tsFor(date, +hh || 0, +mm || 0);
   });
 }
 function patchHabit(date, id, checked) {
@@ -190,7 +195,7 @@ function cycleSore(region) {
 function addFood(f) {
   const k = ck();
   // Si cargás un día pasado, el horario por defecto es el mediodía de ese día (no la hora actual).
-  const ts = (k === tk()) ? Date.now() : fromKey(k).getTime() + 12 * 3600 * 1000;
+  const ts = (k === tk()) ? Date.now() : tsFor(k, 12, 0);
   mutate(s => { const d = s.fitness.days[k] || (s.fitness.days[k] = {}); d.meals = d.meals || []; d.meals.push({ id: uid(), name: f.name, emoji: f.emoji || '', kcal: num(f.kcal), protein: num(f.protein), ts }); d.calories = num(d.calories) + num(f.kcal); d.protein = num(d.protein) + num(f.protein); });
 }
 function removeMeal(id) {
@@ -481,7 +486,7 @@ function chartLine(series, opts = {}) {
   const dots = pts.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="2.6" fill="${opts.color || 'var(--accent)'}"/>`).join('');
   const ref = opts.refValue != null ? `<line x1="${padL}" x2="${W - padR}" y1="${y(opts.refValue).toFixed(1)}" y2="${y(opts.refValue).toFixed(1)}" stroke="var(--text-4)" stroke-dasharray="4 4"/>` : '';
   const dec = opts.dec ?? 0;
-  return `<svg viewBox="0 0 ${W} ${H}" class="fit-chart">
+  return `<svg viewBox="0 0 ${W} ${H}" class="fit-chart" role="img"${opts.ariaLabel ? ` aria-label="${escapeHtml(opts.ariaLabel)}"` : ''}>
     <text x="2" y="${(y(max) + 3).toFixed(1)}" class="fit-chart-lbl">${(+max).toFixed(dec)}</text>
     <text x="2" y="${(y(min) + 3).toFixed(1)}" class="fit-chart-lbl">${(+min).toFixed(dec)}</text>${ref}
     <path d="${d}" fill="none" stroke="${opts.color || 'var(--accent)'}" stroke-width="2"/>${dots}
@@ -498,7 +503,7 @@ function chartBars(series, opts = {}) {
   const y = v => H - padB - (v / max) * (H - padT - padB);
   const bars = pts.map((p, i) => { const h = (H - padB) - y(p.value); const under = opts.refValue != null && p.value < opts.refValue; return `<rect x="${(padL + i * bw + bw * 0.15).toFixed(1)}" y="${y(p.value).toFixed(1)}" width="${(bw * 0.7).toFixed(1)}" height="${Math.max(0, h).toFixed(1)}" rx="2" fill="${under ? 'var(--red)' : (opts.color || 'var(--accent)')}"/>`; }).join('');
   const ref = opts.refValue != null ? `<line x1="${padL}" x2="${W - padR}" y1="${y(opts.refValue).toFixed(1)}" y2="${y(opts.refValue).toFixed(1)}" stroke="var(--text-4)" stroke-dasharray="4 4"/><text x="${W - padR}" y="${(y(opts.refValue) - 3).toFixed(1)}" text-anchor="end" class="fit-chart-lbl">obj ${opts.refValue}</text>` : '';
-  return `<svg viewBox="0 0 ${W} ${H}" class="fit-chart"><text x="2" y="12" class="fit-chart-lbl">${max.toFixed(0)}</text>${ref}${bars}<text x="${padL}" y="${H - 5}" class="fit-chart-lbl">${escapeHtml(pts[0].label)}</text><text x="${W - padR}" y="${H - 5}" text-anchor="end" class="fit-chart-lbl">${escapeHtml(pts[pts.length - 1].label)}</text></svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" class="fit-chart" role="img"${opts.ariaLabel ? ` aria-label="${escapeHtml(opts.ariaLabel)}"` : ''}><text x="2" y="12" class="fit-chart-lbl">${max.toFixed(0)}</text>${ref}${bars}<text x="${padL}" y="${H - 5}" class="fit-chart-lbl">${escapeHtml(pts[0].label)}</text><text x="${W - padR}" y="${H - 5}" text-anchor="end" class="fit-chart-lbl">${escapeHtml(pts[pts.length - 1].label)}</text></svg>`;
 }
 
 // ---- body map ----
@@ -547,7 +552,7 @@ const REGION_LABEL = {
 const baseRegion = (r) => r.replace(/_(der|izq)$/, '');
 function bodyMapSVG(view, sore) {
   const zones = (view === 'front' ? FRONT : BACK).map(([r, fn]) => `<g class="fit-zone" data-region="${r}">${fn(SOREL[sore[r] || 0])}</g>`).join('');
-  return `<svg viewBox="0 0 140 190" class="fit-body-svg">${SIL}${zones}</svg>`;
+  return `<svg viewBox="0 0 140 190" class="fit-body-svg" role="img" aria-label="Mapa corporal ${view === 'front' ? 'de frente' : 'de espalda'} con zonas musculares cargadas">${SIL}${zones}</svg>`;
 }
 const SORE_TIPS = {
   lumbares: 'Lumbar cargada: evitá peso muerto/sentadilla pesada hoy. Hacé gato-camello, rodillas al pecho y movilidad de cadera. Si el dolor es agudo o irradia a la pierna, frená.',
@@ -591,9 +596,10 @@ function closeTheDayCard(k, t) {
 // Cuenta días consecutivos (hacia atrás) que cumplen una condición. Hoy incompleto no rompe la racha.
 function streakDays(predFn) {
   const days = F().days || {};
+  const now = new Date(); // referencia fija: un render que cruza medianoche no mezcla bases
   let count = 0;
   for (let i = 0; i < 400; i++) {
-    const rec = days[todayKey(addDays(new Date(), -i))];
+    const rec = days[todayKey(addDays(now, -i))];
     const ok = rec && predFn(rec);
     if (ok) count++;
     else if (i === 0) continue;
@@ -843,10 +849,11 @@ function bodyComidas() {
   const isToday = (k === tk());
   const dayLabel = isToday ? 'hoy' : fmtDayName(k);
   const meals = today.meals || [];
-  const groups = [...new Set(f.foodLibrary.map(x => x.group))];
+  const foodLib = f.foodLibrary || []; // puede faltar en blobs viejos recargados desde el server
+  const groups = [...new Set(foodLib.map(x => x.group))];
   const grid = groups.map(g => `
     <div class="fit-food-group"><div class="fit-food-gh">${escapeHtml(g)}</div><div class="fit-food-grid">
-      ${f.foodLibrary.filter(x => x.group === g).map(x => `<button class="fit-food" data-food="${x.id}"><span class="fit-food-emoji">${x.emoji || '🍽️'}</span><span class="fit-food-name">${escapeHtml(x.name)}</span><span class="fit-food-macros">${x.kcal} kcal · ${x.protein} g</span></button>`).join('')}
+      ${foodLib.filter(x => x.group === g).map(x => `<button class="fit-food" data-food="${x.id}"><span class="fit-food-emoji">${x.emoji || '🍽️'}</span><span class="fit-food-name">${escapeHtml(x.name)}</span><span class="fit-food-macros">${x.kcal} kcal · ${x.protein} g</span></button>`).join('')}
     </div></div>`).join('');
   const customForm = showFoodForm ? `
     <div class="fit-food-form">
@@ -974,7 +981,7 @@ function bodyPeso() {
     else if (r > hi * 1.6) { rateNote = `Vas rápido (+${r.toFixed(2)} kg/sem): a este ritmo sumás más grasa. Ideal ${band}.`; rateLvl = 'warn'; }
     else { rateNote = `✅ Buen ritmo de lean bulk (vas +${r.toFixed(2)} kg/sem, ideal ${band}).`; rateLvl = 'ok'; }
   }
-  const chart = `<div class="card"><div class="fit-prog-row"><span class="card-title" style="margin:0">Tendencia de peso</span><strong>${rate}</strong></div><div style="margin-top:10px">${chartLine(tr.points.map(p => ({ label: fmtDay(p.date), value: +p.kg })), { color: 'var(--accent)', dec: 1 })}</div>${rateNote ? `<div class="fit-alert ${rateLvl}" style="margin-top:10px">${escapeHtml(rateNote)}</div>` : ''}</div>`;
+  const chart = `<div class="card"><div class="fit-prog-row"><span class="card-title" style="margin:0">Tendencia de peso</span><strong>${rate}</strong></div><div style="margin-top:10px">${chartLine(tr.points.map(p => ({ label: fmtDay(p.date), value: +p.kg })), { color: 'var(--accent)', dec: 1, ariaLabel: 'Gráfico de línea: tendencia de peso en kilogramos' })}</div>${rateNote ? `<div class="fit-alert ${rateLvl}" style="margin-top:10px">${escapeHtml(rateNote)}</div>` : ''}</div>`;
   const rows = list.length ? list.map(w => `<div class="fit-hist-row"><div class="fit-hist-date">${fmtDay(w.date)}</div><div class="fit-hist-main"><strong>${(+w.kg).toFixed(1)} kg</strong>${w.bodyFatPct != null ? ` · ${(+w.bodyFatPct).toFixed(1)}% grasa` : ''}${w.muscleKg != null ? ` · ${(+w.muscleKg).toFixed(1)} kg músc` : ''}</div><div class="fit-hist-actions"><button class="btn btn-ghost btn-sm" data-del-weight="${w.id}">✕</button></div></div>`).join('') : '<div class="muted text-xs">Sin pesajes todavía.</div>';
   return form + chart + `<div class="card"><div class="card-title">Pesajes</div><div class="fit-hist">${rows}</div></div>`;
 }
@@ -1225,13 +1232,13 @@ function bodyReportes() {
   }
 
   return sel + stats + adher + balance + comp
-    + card('Peso (kg)', chartLine(weightSeries, { color: 'var(--accent)', dec: 1 }))
-    + card('% Grasa corporal', chartLine(bfSeries, { color: 'var(--red)', dec: 1 }), 'cargá el % en Peso')
-    + card('Músculo (kg)', chartLine(muscleSeries, { color: 'var(--green)', dec: 1 }), 'de tu balanza o estimado')
-    + card('Grasa (kg)', chartLine(fatSeries, { color: 'var(--orange)', dec: 1 }))
-    + card('Calorías por día', chartBars(calSeries, { color: 'var(--accent)', refValue: t ? t.target : null }))
-    + card('Proteína por día (g)', chartBars(protSeries, { color: 'var(--green)', refValue: t ? t.protein : null }))
-    + card('Sueño por noche (h)', chartBars(sleepSeries, { color: 'var(--blue)', refValue: 7.5 }));
+    + card('Peso (kg)', chartLine(weightSeries, { color: 'var(--accent)', dec: 1, ariaLabel: 'Gráfico de línea: evolución del peso en kilogramos' }))
+    + card('% Grasa corporal', chartLine(bfSeries, { color: 'var(--red)', dec: 1, ariaLabel: 'Gráfico de línea: evolución del porcentaje de grasa corporal' }), 'cargá el % en Peso')
+    + card('Músculo (kg)', chartLine(muscleSeries, { color: 'var(--green)', dec: 1, ariaLabel: 'Gráfico de línea: evolución de masa muscular en kilogramos' }), 'de tu balanza o estimado')
+    + card('Grasa (kg)', chartLine(fatSeries, { color: 'var(--orange)', dec: 1, ariaLabel: 'Gráfico de línea: evolución de masa grasa en kilogramos' }))
+    + card('Calorías por día', chartBars(calSeries, { color: 'var(--accent)', refValue: t ? t.target : null, ariaLabel: 'Gráfico de barras: calorías consumidas por día' }))
+    + card('Proteína por día (g)', chartBars(protSeries, { color: 'var(--green)', refValue: t ? t.protein : null, ariaLabel: 'Gráfico de barras: gramos de proteína por día' }))
+    + card('Sueño por noche (h)', chartBars(sleepSeries, { color: 'var(--blue)', refValue: 7.5, ariaLabel: 'Gráfico de barras: horas de sueño por noche' }));
 }
 
 function bodyAprende() {
@@ -1324,6 +1331,9 @@ const bodyFor = (id) => ({ resumen: bodyResumen, dieta: bodyDieta, plan: bodyPla
 function wire(root) {
   const $ = (s) => root.querySelector(s);
   const all = (s) => Array.from(root.querySelectorAll(s));
+  // OJO: k queda fijado al día del render. Si la pestaña queda abierta cruzando la medianoche,
+  // los registros rápidos (agua, sueño, cafeína, actividad, hábitos) caen en el día del render.
+  // Las comidas no: addFood/editMealTime resuelven ck() al momento del click.
   const k = tk();
   all('.fit-tab').forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; renderFitness(root); }));
 
@@ -1338,7 +1348,11 @@ function wire(root) {
   all('[data-logrepeat]').forEach(b => b.addEventListener('click', () => { const it = lastRepeatMeals[+b.dataset.logrepeat]; if (it) logMealIdea(it); }));
 
   // Bienestar
-  $('#fit-sleep-save')?.addEventListener('click', () => saveDay(k, { sleepHours: num($('#fit-sleep').value) }));
+  $('#fit-sleep-save')?.addEventListener('click', () => {
+    const h = num($('#fit-sleep').value);
+    if (!inRange(h, 0, 24)) { toast('Horas de sueño inválidas (0–24)', 'error'); return; }
+    saveDay(k, { sleepHours: h });
+  });
   $('#fit-water-250')?.addEventListener('click', () => addWater(k, 250));
   $('#fit-water-500')?.addEventListener('click', () => addWater(k, 500));
   $('#fit-water-minus')?.addEventListener('click', () => addWater(k, -250));
@@ -1350,7 +1364,11 @@ function wire(root) {
   all('[data-cafdel]').forEach(b => b.addEventListener('click', () => removeCaffeine(k, b.dataset.cafdel)));
   all('[data-caftime]').forEach(i => i.addEventListener('change', () => editCaffeineTime(k, i.dataset.caftime, i.value)));
   all('[data-inten]').forEach(b => b.addEventListener('click', () => { actIntensity = b.dataset.inten; renderFitness(root); }));
-  all('[data-act]').forEach(b => b.addEventListener('click', () => { const min = num(root.querySelector('#fit-act-min')?.value, 0); logMovement(k, b.dataset.act, min); }));
+  all('[data-act]').forEach(b => b.addEventListener('click', () => {
+    const min = num(root.querySelector('#fit-act-min')?.value, 0);
+    if (!inRange(min, 1, 1440)) { toast('Minutos inválidos (1–1440)', 'error'); return; }
+    logMovement(k, b.dataset.act, min);
+  }));
   all('[data-actdel]').forEach(b => b.addEventListener('click', () => removeMovement(k, b.dataset.actdel)));
   all('[data-acttime]').forEach(i => i.addEventListener('change', () => editActivityTime(k, i.dataset.acttime, i.value)));
   all('[data-mealtime]').forEach(i => i.addEventListener('change', () => editMealTime(ck(), i.dataset.mealtime, i.value)));
@@ -1370,13 +1388,15 @@ function wire(root) {
   $('#fit-sore-clear')?.addEventListener('click', () => saveDay(k, { soreness: {} }));
 
   // Comidas
-  all('[data-food]').forEach(b => b.addEventListener('click', () => { const food = F().foodLibrary.find(x => x.id === b.dataset.food); if (food) addFood(food); }));
+  all('[data-food]').forEach(b => b.addEventListener('click', () => { const food = (F().foodLibrary || []).find(x => x.id === b.dataset.food); if (food) addFood(food); }));
   all('[data-del-meal]').forEach(b => b.addEventListener('click', () => removeMeal(b.dataset.delMeal)));
   $('#fit-food-toggle')?.addEventListener('click', () => { showFoodForm = !showFoodForm; renderFitness(root); });
   $('#ff-add')?.addEventListener('click', () => {
     const name = $('#ff-name').value.trim(); const kcal = num($('#ff-kcal').value); const protein = num($('#ff-prot').value);
-    if (!name || !kcal) return;
-    mutate(s => { s.fitness.foodLibrary.push({ id: 'u_' + uid(), emoji: $('#ff-emoji').value.trim() || '🍽️', name, kcal, protein, group: 'Otros' }); });
+    if (!name) { toast('Poné un nombre', 'error'); return; }
+    if (!inRange(kcal, 1, 5000)) { toast('Calorías fuera de rango (1–5000)', 'error'); return; }
+    if (!inRange(protein, 0, 500)) { toast('Proteína fuera de rango (0–500 g)', 'error'); return; }
+    mutate(s => { s.fitness.foodLibrary = s.fitness.foodLibrary || []; s.fitness.foodLibrary.push({ id: 'u_' + uid(), emoji: $('#ff-emoji').value.trim() || '🍽️', name, kcal, protein, group: 'Otros' }); });
     showFoodForm = false;
   });
   // Navegador de día (Comidas)
@@ -1386,13 +1406,22 @@ function wire(root) {
   $('#fit-c-today')?.addEventListener('click', () => goDay(null));
   $('#fit-c-nav')?.addEventListener('change', (e) => goDay(e.target.value));
   $('#fit-c-date')?.addEventListener('change', (e) => { comidaDate = (e.target.value >= tk() ? null : e.target.value); renderFitness(root); });
-  $('#fit-c-save')?.addEventListener('click', () => { const date = $('#fit-c-date').value || k; saveDay(date, { calories: num($('#fit-c-cal').value), protein: num($('#fit-c-prot').value) }); comidaDate = (date >= tk() ? null : date); renderFitness(root); });
+  $('#fit-c-save')?.addEventListener('click', () => {
+    const date = $('#fit-c-date').value || k;
+    const cal = num($('#fit-c-cal').value), prot = num($('#fit-c-prot').value);
+    if (!inRange(cal, 0, 10000) || !inRange(prot, 0, 1000)) { toast('Valores fuera de rango', 'error'); return; }
+    saveDay(date, { calories: cal, protein: prot });
+    comidaDate = (date >= tk() ? null : date);
+    renderFitness(root);
+  });
 
   // Peso — guardar (incluye campos extra de la balanza si están)
   $('#fit-w-save')?.addEventListener('click', () => {
     const g = (id) => { const el = $('#fit-w-' + id); return el ? el.value : ''; };
     const date = $('#fit-w-date').value || k, kg = num(g('kg'));
-    if (!kg) return;
+    if (!inRange(kg, 30, 250)) { toast('Peso fuera de rango (30–250 kg)', 'error'); return; }
+    const bf = g('bf');
+    if (bf !== '' && !inRange(num(bf), 3, 70)) { toast('% de grasa fuera de rango (3–70)', 'error'); return; }
     const optNum = (v) => (v !== '' && v != null) ? num(v) : null;
     const entry = { id: uid(), date, kg,
       bodyFatPct: optNum(g('bf')), muscleKg: optNum(g('muscle')),

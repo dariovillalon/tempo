@@ -2,6 +2,8 @@
 data/
 # Launcher local con secretos (SMTP / contraseña) — NO subir al repo
 start.command
+# Secretos locales (SMTP / contraseña) — NO subir al repo
+.env
 
 # OS
 .DS_Store

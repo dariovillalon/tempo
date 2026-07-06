@@ -2,6 +2,8 @@
 
 import { api } from './api.js';
 import { uid, todayKey, debounce, addDays, fromKey } from './utils.js';
+// Primer import de UI en state.js — toast.js no importa nada, así que no hay ciclo.
+import { toast } from './components/toast.js';
 
 // Compute the next due date for a recurring task once it's marked done.
 // Recurrence is stored as a compact string for round-tripping in markdown:
@@ -231,39 +233,151 @@ const setSaveStatus = (s) => {
   notify('save-status');
 };
 
-// Debounced server persistence
-const persist = debounce(async () => {
+// ----- Server persistence (debounced + retry + optimistic locking) -----
+// serverRev: última revisión conocida del servidor (contrato: rev vive dentro
+// del blob de estado; el PUT manda { state, rev } y el server responde 409 si
+// otro cliente guardó primero).
+let serverRev = 0;
+let mutSeq = 0;             // se incrementa en cada mutación persistible
+let dirtySinceSave = false; // hay cambios locales sin confirmar por el server
+let saveInFlight = false;
+let saveQueued = false;
+let retryCount = 0;
+let retryTimer = null;
+let lastFailToastAt = 0;
+
+const MAX_RETRIES = 5;
+
+// Cuando un endpoint del server bumpea rev por su cuenta (conectar/desconectar
+// vault, import), responde el rev nuevo: sincronizarlo acá evita que el próximo
+// PUT de esta misma pestaña reciba un 409 espurio y "pierda" sus cambios.
+export const syncServerRev = (rev) => {
+  if (typeof rev === 'number' && rev > serverRev) serverRev = rev;
+};
+
+const buildPayload = () => ({
+  projects: state.projects,
+  tasks: state.tasks,
+  blocks: state.blocks,
+  pomodoroLog: state.pomodoroLog,
+  whiteboards: state.whiteboards,
+  activity: state.activity,
+  pomodoroSettings: state.pomodoroSettings,
+  settings: state.settings,
+  fitness: state.fitness,
+  mytime: state.mytime,
+  bills: state.bills,
+  promos: state.promos,
+  lastUsed: state.lastUsed,
+});
+
+const scheduleRetry = () => {
+  if (retryTimer) clearTimeout(retryTimer);
+  // Backoff exponencial con jitter, techo 30s
+  const delay = Math.min(30_000, 1000 * 2 ** retryCount) + Math.random() * 300;
+  retryCount++;
+  retryTimer = setTimeout(() => { retryTimer = null; doSave(); }, delay);
+};
+
+const maybeFailToast = (msg) => {
+  if (Date.now() - lastFailToastAt < 8000) return;
+  lastFailToastAt = Date.now();
+  toast(msg, 'error', {
+    actionLabel: 'Reintentar',
+    onAction: () => { retryCount = 0; lastFailToastAt = 0; doSave(); },
+    duration: 8000,
+  });
+};
+
+async function doSave() {
+  if (saveInFlight) { saveQueued = true; return; }
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  saveInFlight = true;
   setSaveStatus('saving');
+  const seqAtStart = mutSeq;
   try {
-    const payload = {
-      projects: state.projects,
-      tasks: state.tasks,
-      blocks: state.blocks,
-      pomodoroLog: state.pomodoroLog,
-      whiteboards: state.whiteboards,
-      activity: state.activity,
-      pomodoroSettings: state.pomodoroSettings,
-      settings: state.settings,
-      fitness: state.fitness,
-      mytime: state.mytime,
-      bills: state.bills,
-      promos: state.promos,
-      lastUsed: state.lastUsed,
-    };
-    await api.putState(payload);
+    const res = await api.putState(buildPayload(), serverRev);
+    if (typeof res?.rev === 'number') serverRev = res.rev;
+    retryCount = 0;
+    saveInFlight = false;
+    if (mutSeq === seqAtStart) dirtySinceSave = false;
+    if (saveQueued || mutSeq !== seqAtStart) {
+      // Hubo mutaciones mientras guardábamos: guardar de nuevo
+      saveQueued = false;
+      doSave();
+      return;
+    }
     setSaveStatus('saved');
     setTimeout(() => { if (saveStatus === 'saved') setSaveStatus('idle'); }, 1200);
   } catch (e) {
+    saveInFlight = false;
+    if (e?.status === 409) {
+      // Otro cliente guardó primero. Recargar (refresca serverRev) y NO
+      // reintentar con el rev viejo — sería 409 para siempre.
+      console.warn('[save] conflicto de versiones (409), recargando estado', e);
+      retryCount = 0;
+      saveQueued = false;
+      dirtySinceSave = false;
+      const ok = await reloadState();
+      setSaveStatus(ok ? 'idle' : 'error');
+      toast('Otro dispositivo guardó cambios — recargué el estado del servidor', 'error');
+      return;
+    }
     console.error('save failed', e);
     setSaveStatus('error');
+    const firstFailure = retryCount === 0;
+    const exhausted = retryCount >= MAX_RETRIES;
+    if (!exhausted) scheduleRetry();
+    if (firstFailure) maybeFailToast('No pude guardar los cambios');
+    else if (exhausted) maybeFailToast('Sigo sin poder guardar los cambios');
   }
-}, 350);
+}
+
+// Debounced server persistence
+const persist = debounce(() => doSave(), 350);
+
+// Flush inmediato al ocultar/cerrar la pestaña: una mutación puede quedar
+// dentro de la ventana del debounce (350ms) o de un retry. keepalive falla en
+// Chromium con bodies >64KB (TypeError inmediato), de ahí el fallback a fetch
+// normal — best-effort; la defensa principal es el retry loop de doSave.
+const flushPendingSave = () => {
+  if (!dirtySinceSave) return;
+  // Con un doSave en vuelo, ese PUT ya lleva estos cambios: duplicarlo con el
+  // mismo rev le regalaría un 409 espurio a uno de los dos (y el handler recarga).
+  if (saveInFlight) return;
+  const seqAtFlush = mutSeq;
+  const body = JSON.stringify({ state: buildPayload(), rev: serverRev });
+  const opts = { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body };
+  // Si la pestaña sigue viva (visibilitychange), aprendé el rev nuevo para
+  // que el próximo save no choque con 409. "Limpio" solo si no hubo mutaciones
+  // durante el vuelo del flush (mismo criterio que doSave).
+  const learnRev = (p) => p
+    .then(r => (r && r.ok ? r.json() : null))
+    .then(j => {
+      if (j && typeof j.rev === 'number') {
+        serverRev = j.rev;
+        if (mutSeq === seqAtFlush) dirtySinceSave = false;
+      }
+    });
+  const plain = () => { try { learnRev(fetch('/api/state', opts)).catch(() => {}); } catch { /* nada más que hacer */ } };
+  try {
+    // El límite de 64KB puede rechazar la promesa o tirar sync según el browser
+    learnRev(fetch('/api/state', { ...opts, keepalive: true })).catch(plain);
+  } catch {
+    plain();
+  }
+};
+window.addEventListener('pagehide', flushPendingSave);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flushPendingSave();
+});
 
 export const initState = async () => {
   if (initialized) return;
   try {
     const data = await api.getState();
     Object.assign(state, data);
+    serverRev = typeof data.rev === 'number' ? data.rev : 0;
     // ensure required arrays exist
     state.projects ||= [];
     state.tasks ||= [];
@@ -353,6 +467,7 @@ export const reloadState = async () => {
   try {
     const data = await api.getState();
     Object.assign(state, data);
+    serverRev = typeof data.rev === 'number' ? data.rev : serverRev;
     state.projects ||= []; state.tasks ||= []; state.blocks ||= [];
     state.pomodoroLog ||= []; state.whiteboards ||= []; state.activity ||= [];
     state.settings ||= {};
@@ -369,7 +484,11 @@ export const mutate = (fn, opts = {}) => {
     addActivity(opts.activity);
   }
   notify(opts.event || 'change');
-  if (!opts.skipSave) persist();
+  if (!opts.skipSave) {
+    mutSeq++;
+    dirtySinceSave = true;
+    persist();
+  }
   return result;
 };
 
@@ -470,7 +589,8 @@ export const removeAllTasks = ({ alsoVault = true } = {}) => {
   if (alsoVault && state.vault?.path) {
     // Push empty arrays to each linked project — server deletes orphan files
     for (const l of linked) {
-      api.syncTasks(l.folder, l.name, []).catch(() => {});
+      // Si falla, quedan archivos huérfanos en el vault que resucitan en el próximo import
+      api.syncTasks(l.folder, l.name, []).catch((e) => console.warn('[vault sync] no pude vaciar tasks/ de', l.name, e));
     }
   }
   return { removed };
@@ -517,6 +637,7 @@ export const refreshTasksFromVault = async () => {
             priority: v.priority || 'med',
             due: v.due || null,
             followUpAt: v.followUpAt || null,
+            recurrence: v.recurrence || null,
             pomodoros: v.pomodoros || 0,
             pomodorosDone: v.pomodorosDone || prev.pomodorosDone || 0,
             notes: v.notes || '',
@@ -534,8 +655,12 @@ export const refreshTasksFromVault = async () => {
             priority: v.priority || 'med',
             due: v.due || null,
             followUpAt: v.followUpAt || null,
+            recurrence: v.recurrence || null,
             notes: v.notes || '',
+            tags: [],
+            subtasks: [],
             comments: Array.isArray(v.comments) ? v.comments : [],
+            assignee: null,
             createdAt: Date.now(),
             order: Date.now(),
           });
@@ -684,6 +809,8 @@ export const deleteProject = (id) => {
 
 // ----- Vault auto-sync (per-project, debounced) -----
 const vaultSyncTimers = new Map();
+// Varias carpetas pueden fallar en ráfaga tras una edición: un solo toast cada 10s.
+let lastVaultSyncToast = 0;
 const scheduleVaultSync = (projectId) => {
   if (!projectId || !state.vault?.path) return;
   const p = findProject(projectId);
@@ -695,6 +822,10 @@ const scheduleVaultSync = (projectId) => {
       await api.syncTasks(p.vaultFolder, p.name, tasksForProject(projectId));
     } catch (e) {
       console.warn('[vault sync] failed for', p.name, e);
+      if (Date.now() - lastVaultSyncToast > 10_000) {
+        lastVaultSyncToast = Date.now();
+        toast(`No pude sincronizar "${p.name}" con el vault: ${e.message}`, 'error');
+      }
     }
   }, 1500));
 };

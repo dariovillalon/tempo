@@ -40,7 +40,10 @@ const refreshPrice = async () => {
   try {
     const r = await api.getBtcPrice();
     if (r?.snapshot) cache.snapshot = r.snapshot;
-  } catch {}
+  } catch (e) {
+    // Poll periódico: sin toast para no molestar, pero que quede rastro en consola.
+    console.warn('[btc] refresh falló', e);
+  }
 };
 
 export const renderBtcAlerts = (root) => {

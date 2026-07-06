@@ -3,23 +3,56 @@
 
 import http from 'node:http';
 import fs from 'node:fs/promises';
-import { existsSync, createReadStream } from 'node:fs';
+import { existsSync, createReadStream, readFileSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import url from 'node:url';
 import tls from 'node:tls';
+import crypto from 'node:crypto';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
+
+// Minimal .env loader (sin dependencias): toma <app>/.env si existe.
+// Las variables ya presentes en el entorno real tienen prioridad.
+try {
+  const envFile = path.join(__dirname, '.env');
+  if (existsSync(envFile)) {
+    for (const raw of readFileSync(envFile, 'utf-8').split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) continue;
+      const m = line.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+      if (!m) continue;
+      // PORT/HOST cambian la dirección de escucha (0.0.0.0): solo desde el
+      // entorno real (Render/tunel), nunca desde un archivo local.
+      if (m[1] === 'PORT' || m[1] === 'TEMPO_PORT' || m[1] === 'HOST') continue;
+      let v = m[2].trim();
+      if ((v[0] === '"' && v.endsWith('"')) || (v[0] === "'" && v.endsWith("'"))) v = v.slice(1, -1);
+      if (process.env[m[1]] === undefined) process.env[m[1]] = v;
+    }
+  }
+} catch { /* .env es opcional */ }
+
 const PORT = parseInt(process.env.PORT || process.env.TEMPO_PORT || '7777', 10);
 // Optional password protection — set TEMPO_PASSWORD to require a login.
 // Useful when exposing tempo to the internet via a tunnel (ngrok / cloudflared / etc.).
 const TEMPO_PASSWORD = process.env.TEMPO_PASSWORD || '';
+// CORS: por defecto NO se emiten headers (la app es same-origin y no los necesita).
+// Seteá ALLOWED_ORIGIN solo si un consumidor cross-origin legítimo lo requiere.
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '';
 
 // ============================================================
 // Persistencia: archivo local por defecto; Postgres si hay DATABASE_URL.
 // (En la nube se usa la DB; en tu máquina sigue todo con data/*.json)
 // ============================================================
 const DATABASE_URL = process.env.DATABASE_URL || '';
+
+// Modo nube sin contraseña = estado + vault expuestos a internet. Cortar acá.
+if (DATABASE_URL && !TEMPO_PASSWORD) {
+  console.error('  ERROR: DATABASE_URL está configurada (modo nube) pero falta TEMPO_PASSWORD.');
+  console.error('  Configurá TEMPO_PASSWORD para proteger la instancia y reiniciá.');
+  process.exit(1);
+}
+
 let _pgPool = null;
 async function pgPool() {
   if (!DATABASE_URL) return null;
@@ -60,6 +93,7 @@ await fs.mkdir(NOTES_DIR, { recursive: true });
 function defaultState() {
   return {
     version: 2,
+    rev: 0, // contador monotónico para bloqueo optimista (409 en escrituras viejas)
     projects: [
       {
         id: 'p_general',
@@ -122,6 +156,47 @@ async function saveState(state) {
   const tmp = STATE_FILE + '.tmp';
   await fs.writeFile(tmp, JSON.stringify(state, null, 2));
   await fs.rename(tmp, STATE_FILE);
+}
+
+// Mutex en proceso: serializa los read-modify-write del estado (el backend de
+// archivo no tiene CAS, y Node intercala awaits entre getState y saveState).
+let _stateChain = Promise.resolve();
+function withStateLock(fn) {
+  const run = _stateChain.then(fn, fn);
+  _stateChain = run.catch(() => {});
+  return run;
+}
+
+// Escritura condicional (CAS) para el backend Postgres: los scripts *-nube.mjs
+// actualizan la fila kv por fuera del server, así que el compare va en SQL.
+// Devuelve false si otro escritor pisó el estado (rev distinto al esperado).
+async function saveStateChecked(state, expectedRev) {
+  if (DATABASE_URL) {
+    const p = await pgPool();
+    const r = await p.query(
+      "UPDATE kv SET data = $1 WHERE key = 'state' AND COALESCE((data->>'rev')::int, 0) = $2",
+      [JSON.stringify(state), expectedRev]
+    );
+    return r.rowCount === 1;
+  }
+  await saveState(state); // atómico (tmp+rename); serializado por withStateLock
+  return true;
+}
+
+// Escritura iniciada por el server (vault/import): no rechaza por rev, pero
+// usa CAS con reintentos para no pisar a un escritor externo (scripts .mjs en pg).
+// Devuelve el rev nuevo para que la respuesta HTTP se lo informe al cliente.
+async function bumpStateWith(mutateFn) {
+  return withStateLock(async () => {
+    for (let i = 0; i < 3; i++) {
+      const cur = await getState().catch(() => defaultState());
+      const currentRev = Number.isInteger(cur.rev) ? cur.rev : 0;
+      mutateFn(cur);
+      cur.rev = currentRev + 1;
+      if (await saveStateChecked(cur, currentRev)) return cur.rev;
+    }
+    throw new Error('el estado en la nube cambió repetidamente, no pude guardar');
+  });
 }
 
 let backupTimer = null;
@@ -489,7 +564,10 @@ async function listTaskFolder(vaultPath, projectFolder) {
         comments,
         filename: it.name,
       });
-    } catch {}
+    } catch (e) {
+      // Sin log la tarea desaparece del sync en silencio
+      console.warn('[sync] task ilegible', it.name, '·', e.message);
+    }
   }
   return out;
 }
@@ -508,7 +586,10 @@ async function syncTaskFolder(vaultPath, projectFolder, tasks) {
   }
   for (const f of existing) {
     if (!wanted.has(f)) {
-      try { await fs.unlink(path.join(tasksDir, f)); } catch {}
+      // Si no se puede borrar, la tarea huérfana resucita en el próximo import
+      try { await fs.unlink(path.join(tasksDir, f)); } catch (e) {
+        console.warn('[sync] no pude borrar', f, '·', e.message);
+      }
     }
   }
   return { count: wanted.size, removed: existing.filter(f => !wanted.has(f)).length };
@@ -823,11 +904,19 @@ async function fetchICS(url) {
   if (hit && (Date.now() - hit.fetchedAt) < ICS_TTL_MS) return hit.body;
   let httpUrl = url;
   if (httpUrl.startsWith('webcal://')) httpUrl = 'https://' + httpUrl.slice('webcal://'.length);
-  const res = await fetch(httpUrl, { redirect: 'follow' });
-  if (!res.ok) throw new Error(`ICS fetch ${res.status}`);
-  const body = await res.text();
-  icsCache.set(url, { fetchedAt: Date.now(), body });
-  return body;
+  // Timeout vía AbortController (mismo patrón que fetchBtcPrice): cubre también
+  // un body que se cuelga a mitad de descarga, no solo los headers.
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 10_000);
+  try {
+    const res = await fetch(httpUrl, { redirect: 'follow', signal: ctrl.signal });
+    if (!res.ok) throw new Error(`ICS fetch ${res.status}`);
+    const body = await res.text();
+    icsCache.set(url, { fetchedAt: Date.now(), body });
+    return body;
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 // Read the configured calendar URLs (supports legacy single-URL config too).
@@ -930,9 +1019,19 @@ function parseICS(text) {
         break;
       }
       case 'RRULE': cur.rrule = parseRRule(right); break;
-      case 'EXDATE': {
+      case 'RECURRENCE-ID': {
+        // Instancia puntual modificada de un evento recurrente (p.ej. reunión movida):
+        // este VEVENT reemplaza al slot original de la serie.
         const d = parseICSDate(right, params);
-        if (d) cur.exdates.push(d.date.getTime());
+        if (d) cur.recurrenceId = d.date.getTime();
+        break;
+      }
+      case 'EXDATE': {
+        // Puede traer múltiples fechas separadas por coma en una sola línea
+        for (const v of right.split(',')) {
+          const d = parseICSDate(v.trim(), params);
+          if (d) cur.exdates.push(d.date.getTime());
+        }
         break;
       }
       case 'STATUS': cur.status = right; break;
@@ -944,9 +1043,23 @@ function parseICS(text) {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BYDAY_MAP = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
 
+// Inicio de semana en hora local, para aplicar INTERVAL en reglas WEEKLY+BYDAY.
+// wkst: día de inicio de semana según RFC 5545 (default MO = 1).
+function startOfWeekMs(d, wkst) {
+  const diff = (d.getDay() - wkst + 7) % 7;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - diff).getTime();
+}
+
 // Expand recurring events into instances within [from, to).
 function expandEvents(events, from, to) {
   const out = [];
+  // Overrides con RECURRENCE-ID: al expandir el RRULE hay que saltear esos
+  // slots (el VEVENT modificado se emite solo por la rama sin rrule) para no
+  // mostrar la reunión dos veces (horario viejo + horario nuevo).
+  const overrides = new Set();
+  for (const e of events) {
+    if (e.uid && e.recurrenceId != null) overrides.add(e.uid + '|' + e.recurrenceId);
+  }
   for (const e of events) {
     if (!e.start) continue;
     const baseEnd = e.end || new Date(e.start.getTime() + (e.allDay ? DAY_MS : 60 * 60 * 1000));
@@ -965,6 +1078,7 @@ function expandEvents(events, from, to) {
     const count = r.COUNT ? parseInt(r.COUNT, 10) : Infinity;
     const until = r.UNTIL ? (parseICSDate(r.UNTIL, {})?.date || null) : null;
     const byday = r.BYDAY ? r.BYDAY.split(',').map(s => BYDAY_MAP[s.toUpperCase().slice(-2)]).filter(d => d != null) : null;
+    const wkst = BYDAY_MAP[(r.WKST || 'MO').toUpperCase()] ?? 1;
 
     let cursor = new Date(e.start);
     let produced = 0;
@@ -976,17 +1090,29 @@ function expandEvents(events, from, to) {
       if (freq === 'DAILY') emit = true;
       else if (freq === 'WEEKLY') {
         emit = byday ? byday.includes(cursor.getDay()) : true;
+        // INTERVAL con BYDAY: solo emitir en las semanas que tocan (p.ej. un
+        // evento bisemanal no debe aparecer todas las semanas).
+        if (emit && byday && interval > 1) {
+          const weeks = Math.round((startOfWeekMs(cursor, wkst) - startOfWeekMs(e.start, wkst)) / (7 * DAY_MS));
+          if (weeks % interval !== 0) emit = false;
+        }
       } else if (freq === 'MONTHLY') emit = true;
       else if (freq === 'YEARLY') emit = true;
 
       if (emit) {
         const t = cursor.getTime();
         if (!e.exdates.includes(t)) {
-          const inst = new Date(cursor);
-          if (inst < to && new Date(inst.getTime() + dur) > from) {
-            out.push(makeInstance(e, inst, dur));
+          if (e.uid && overrides.has(e.uid + '|' + t)) {
+            // Slot reemplazado por un VEVENT con RECURRENCE-ID: cuenta como
+            // ocurrencia (para COUNT) pero no se emite desde la serie.
+            produced++;
+          } else {
+            const inst = new Date(cursor);
+            if (inst < to && new Date(inst.getTime() + dur) > from) {
+              out.push(makeInstance(e, inst, dur));
+            }
+            produced++;
           }
-          produced++;
         }
       }
 
@@ -1083,7 +1209,10 @@ async function listNotes() {
         createdAt: n.createdAt, updatedAt: n.updatedAt, size: n.size,
         snippet: (n.content || '').replace(/\s+/g, ' ').trim().slice(0, 140),
       });
-    } catch {}
+    } catch (e) {
+      // Sin log la nota desaparece del listado en silencio
+      console.warn('[notes] nota ilegible', id, '·', e.message);
+    }
   }
   out.sort((a, b) => b.updatedAt - a.updatedAt);
   return out;
@@ -1162,9 +1291,13 @@ function expandPath(input) {
 
 const BTC_CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 min
 const BTC_DEFAULT_COOLDOWN_H = 6;
+const BTC_REARM_PCT = 0.01; // histéresis: re-armar cuando el precio vuelve 1% al lado seguro del target
 const COINGECKO_URL = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_last_updated_at=true';
 
 let lastBtcSnapshot = null; // { price, change24h, fetchedAt, source }
+let smtpFailCount = 0;      // fallos SMTP consecutivos
+let smtpBackoffUntil = 0;   // no reintentar envíos antes de este timestamp
+const SMTP_BACKOFF_MAX_MS = 6 * 3600 * 1000; // tope del backoff exponencial: 6 h
 
 async function readBtcAlerts() {
   try {
@@ -1393,15 +1526,32 @@ async function runBtcAlertCheck({ force = false } = {}) {
   const fired = [];
 
   for (const alert of data.alerts) {
+    // Histéresis: tras disparar, la alerta queda desarmada (armed=false) hasta
+    // que el precio se aleje BTC_REARM_PCT del target hacia el lado seguro.
+    // Alertas viejas sin el campo se tratan como armadas (=== false, no !).
+    if (alert.armed === false) {
+      const target = Number(alert.target);
+      const rearm = alert.direction === 'above'
+        ? snapshot.price <= target * (1 - BTC_REARM_PCT)
+        : snapshot.price >= target * (1 + BTC_REARM_PCT);
+      if (rearm) { alert.armed = true; changed = true; }
+    }
     if (!alertShouldFire(alert, snapshot.price)) continue;
+    if (!force && alert.armed === false) continue;
     const cooldownMs = (alert.cooldownHours ?? BTC_DEFAULT_COOLDOWN_H) * 3600 * 1000;
     const since = alert.lastTriggeredAt ? (now - alert.lastTriggeredAt) : Infinity;
     if (!force && since < cooldownMs) continue;
+    // Backoff exponencial por fallos SMTP consecutivos (Date.now() y no `now`:
+    // el primer fallo del ciclo suprime los envíos restantes del mismo ciclo).
+    if (!force && Date.now() < smtpBackoffUntil) continue;
     try {
       await sendBtcAlertEmail({ to: alert.email, alert, snapshot });
       alert.lastTriggeredAt = now;
       alert.lastTriggerPrice = snapshot.price;
       alert.triggerCount = (alert.triggerCount || 0) + 1;
+      alert.armed = false; // desarmada hasta que el precio se aleje del target
+      smtpFailCount = 0;
+      smtpBackoffUntil = 0;
       data.log.unshift({
         ts: now, alertId: alert.id, price: snapshot.price,
         target: alert.target, direction: alert.direction,
@@ -1411,6 +1561,13 @@ async function runBtcAlertCheck({ force = false } = {}) {
       changed = true;
     } catch (e) {
       console.warn('[btc] envío email falló para', alert.email, '·', e.message);
+      // Nota: NO desarmamos la alerta acá — un envío fallido debe reintentarse
+      // cuando venza el backoff (10min, 20min, 40min... tope 6h).
+      smtpFailCount++;
+      smtpBackoffUntil = Date.now() + Math.min(
+        BTC_CHECK_INTERVAL_MS * 2 ** (smtpFailCount - 1),
+        SMTP_BACKOFF_MAX_MS,
+      );
       data.log.unshift({
         ts: now, alertId: alert.id, price: snapshot.price,
         target: alert.target, direction: alert.direction,
@@ -1422,7 +1579,7 @@ async function runBtcAlertCheck({ force = false } = {}) {
 
   if (data.log.length > 100) data.log.length = 100;
   if (changed) await writeBtcAlerts(data);
-  return { ok: true, snapshot, fired };
+  return { ok: true, snapshot, fired, smtpBackoffUntil: smtpBackoffUntil || null };
 }
 
 // ============================================================
@@ -1448,12 +1605,28 @@ async function handleApi(req, res, parsedUrl) {
       }
       // Accept either { state: {...} } envelope or the state object directly
       const incoming = (body.state && typeof body.state === 'object') ? body.state : body;
-      // Merge with current to preserve fields like vault that the client doesn't send
-      const current = await getState().catch(() => defaultState());
-      const merged = { ...current, ...incoming, version: 2 };
-      await saveState(merged);
-      scheduleBackup();
-      return sendJSON(res, 200, { ok: true, savedAt: Date.now() });
+      // Bloqueo optimista: el cliente manda `rev` (top-level del body, con
+      // fallback a incoming.rev). Sin rev = cliente legacy → se acepta.
+      const clientRev = Number.isInteger(body.rev) ? body.rev
+                      : (Number.isInteger(incoming.rev) ? incoming.rev : null);
+      const result = await withStateLock(async () => {
+        // Merge with current to preserve fields like vault that the client doesn't send
+        const current = await getState().catch(() => defaultState());
+        const currentRev = Number.isInteger(current.rev) ? current.rev : 0;
+        if (clientRev !== null && clientRev < currentRev) {
+          return { status: 409, body: { error: 'Conflicto: hay una versión más nueva del estado', rev: currentRev } };
+        }
+        const merged = { ...current, ...incoming, version: 2, rev: currentRev + 1 };
+        const ok = await saveStateChecked(merged, currentRev);
+        if (!ok) {
+          // La fila de pg cambió abajo nuestro (un script externo ganó la carrera)
+          const fresh = await getState().catch(() => defaultState());
+          return { status: 409, body: { error: 'Conflicto: hay una versión más nueva del estado', rev: fresh.rev ?? 0 } };
+        }
+        return { status: 200, body: { ok: true, savedAt: Date.now(), rev: merged.rev } };
+      });
+      if (result.status === 200) scheduleBackup();
+      return sendJSON(res, result.status, result.body);
     } catch (e) {
       return sendJSON(res, 400, { error: e.message });
     }
@@ -1473,28 +1646,39 @@ async function handleApi(req, res, parsedUrl) {
       if (!existsSync(vaultPath)) return sendJSON(res, 400, { error: 'La carpeta no existe' });
       const stat = await fs.stat(vaultPath);
       if (!stat.isDirectory()) return sendJSON(res, 400, { error: 'La ruta no es una carpeta' });
-      await saveConfig({ vaultPath });
+      // Read-modify-write: config.json también guarda icsUrls; escribir solo
+      // { vaultPath } borraba las suscripciones de calendario.
+      const config = await getConfig();
+      config.vaultPath = vaultPath;
+      await saveConfig(config);
 
       // Scan and return summary stats so the UI can show counts immediately
       let scan = null;
-      try { scan = await scanVault(vaultPath); } catch {}
+      try { scan = await scanVault(vaultPath); } catch (e) {
+        console.warn('[vault] scan falló para', vaultPath, '·', e.message);
+      }
 
       // Persist a short summary in state.vault for UI badges
+      let newRev = null;
       try {
-        const cur = await getState().catch(() => defaultState());
-        cur.vault = {
-          path: vaultPath,
-          name: path.basename(vaultPath),
-          notes: scan?.stats?.notes ?? 0,
-          files: scan?.stats?.filesScanned ?? 0,
-          folders: scan?.stats?.dirsScanned ?? 0,
-          connectedAt: Date.now(),
-        };
-        await saveState(cur);
-      } catch {}
+        newRev = await bumpStateWith(cur => {
+          cur.vault = {
+            path: vaultPath,
+            name: path.basename(vaultPath),
+            notes: scan?.stats?.notes ?? 0,
+            files: scan?.stats?.filesScanned ?? 0,
+            folders: scan?.stats?.dirsScanned ?? 0,
+            connectedAt: Date.now(),
+          };
+        });
+      } catch (e) {
+        console.warn('[vault] no pude persistir state.vault:', e.message);
+      }
 
+      // rev: el cliente lo necesita para que su próximo PUT no dé 409 espurio
       return sendJSON(res, 200, {
         ok: true,
+        rev: newRev,
         vault: {
           path: vaultPath,
           name: path.basename(vaultPath),
@@ -1509,13 +1693,17 @@ async function handleApi(req, res, parsedUrl) {
   }
 
   if (pathname === '/api/vault' && req.method === 'DELETE') {
-    await saveConfig({ vaultPath: null });
+    // Read-modify-write para no pisar icsUrls (ver POST /api/vault)
+    const config = await getConfig();
+    config.vaultPath = null;
+    await saveConfig(config);
+    let newRev = null;
     try {
-      const cur = await getState();
-      cur.vault = null;
-      await saveState(cur);
-    } catch {}
-    return sendJSON(res, 200, { ok: true });
+      newRev = await bumpStateWith(cur => { cur.vault = null; });
+    } catch (e) {
+      console.warn('[vault] no pude reflejar la desconexión en state:', e.message);
+    }
+    return sendJSON(res, 200, { ok: true, rev: newRev });
   }
 
   if (pathname === '/api/vault/tree' && req.method === 'GET') {
@@ -1553,10 +1741,11 @@ async function handleApi(req, res, parsedUrl) {
     if (!config.vaultPath) return sendJSON(res, 400, { error: 'No vault connected' });
     const relPath = parsedUrl.searchParams.get('path');
     if (!relPath) return sendJSON(res, 400, { error: 'Missing path' });
-    const fullPath = path.resolve(path.join(config.vaultPath, relPath));
-    if (!fullPath.startsWith(config.vaultPath)) {
-      return sendJSON(res, 403, { error: 'Forbidden path' });
-    }
+    // resolveVaultPath valida el confinamiento con separador (startsWith a secas
+    // dejaba escapar a hermanos tipo MiVault-backup vía ..)
+    let fullPath;
+    try { fullPath = resolveVaultPath(config.vaultPath, relPath); }
+    catch { return sendJSON(res, 403, { error: 'Forbidden path' }); }
     try {
       const content = await fs.readFile(fullPath, 'utf-8');
       const stat = await fs.stat(fullPath);
@@ -1578,10 +1767,9 @@ async function handleApi(req, res, parsedUrl) {
       const body = await readBody(req);
       const relPath = body.path;
       if (!relPath) return sendJSON(res, 400, { error: 'Missing path' });
-      const fullPath = path.resolve(path.join(config.vaultPath, relPath));
-      if (!fullPath.startsWith(config.vaultPath)) {
-        return sendJSON(res, 403, { error: 'Forbidden' });
-      }
+      let fullPath;
+      try { fullPath = resolveVaultPath(config.vaultPath, relPath); }
+      catch { return sendJSON(res, 403, { error: 'Forbidden' }); }
       await fs.mkdir(path.dirname(fullPath), { recursive: true });
       await fs.writeFile(fullPath, body.content || '', 'utf-8');
       return sendJSON(res, 200, { ok: true });
@@ -1835,7 +2023,10 @@ async function handleApi(req, res, parsedUrl) {
       const notes = await listNotes();
       const fullNotes = [];
       for (const n of notes) {
-        try { fullNotes.push(await readNote(n.id)); } catch {}
+        // El backup omitiría la nota en silencio — avisar al menos por consola
+        try { fullNotes.push(await readNote(n.id)); } catch (e) {
+          console.warn('[export] nota ilegible', n.id, '·', e.message);
+        }
       }
       return sendJSON(res, 200, {
         exportedAt: Date.now(),
@@ -1850,10 +2041,14 @@ async function handleApi(req, res, parsedUrl) {
   if (pathname === '/api/import' && req.method === 'POST') {
     try {
       const body = await readBody(req);
+      let newRev = null;
       if (body.state && typeof body.state === 'object') {
-        const cur = await getState().catch(() => defaultState());
-        const merged = { ...cur, ...body.state, version: 2 };
-        await saveState(merged);
+        // Import es acción explícita del usuario: no rechaza por rev, pero lo
+        // bumpea (con CAS) para que los clientes detecten el cambio.
+        newRev = await bumpStateWith(cur => {
+          Object.assign(cur, body.state);
+          cur.version = 2;
+        });
         scheduleBackup();
       }
       let imported = 0;
@@ -1871,7 +2066,7 @@ async function handleApi(req, res, parsedUrl) {
           imported++;
         }
       }
-      return sendJSON(res, 200, { ok: true, importedNotes: imported });
+      return sendJSON(res, 200, { ok: true, importedNotes: imported, rev: newRev });
     } catch (e) {
       return sendJSON(res, 500, { error: e.message });
     }
@@ -2089,6 +2284,7 @@ async function handleApi(req, res, parsedUrl) {
         lastTriggeredAt: null,
         lastTriggerPrice: null,
         triggerCount: 0,
+        armed: true, // histéresis: se desarma al disparar y re-arma al alejarse el precio
       };
       data.alerts.push(alert);
       await writeBtcAlerts(data);
@@ -2113,13 +2309,17 @@ async function handleApi(req, res, parsedUrl) {
           const t = Number(body.target);
           if (!Number.isFinite(t) || t <= 0) return sendJSON(res, 400, { error: 'Precio inválido' });
           a.target = t;
+          a.armed = true; // el latch refería al target viejo
         }
         if (body.email !== undefined) {
           const e = (body.email || '').trim();
           if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return sendJSON(res, 400, { error: 'Email inválido' });
           a.email = e;
         }
-        if (body.direction !== undefined) a.direction = body.direction === 'above' ? 'above' : 'below';
+        if (body.direction !== undefined) {
+          a.direction = body.direction === 'above' ? 'above' : 'below';
+          a.armed = true; // el latch refería a la dirección vieja
+        }
         if (body.active !== undefined) a.active = !!body.active;
         if (body.cooldownHours !== undefined) {
           const c = Number(body.cooldownHours);
@@ -2129,6 +2329,7 @@ async function handleApi(req, res, parsedUrl) {
         if (body.resetTriggered === true) {
           a.lastTriggeredAt = null;
           a.lastTriggerPrice = null;
+          a.armed = true;
         }
         a.updatedAt = Date.now();
         await writeBtcAlerts(data);
@@ -2190,7 +2391,8 @@ async function serveStatic(req, res, parsedUrl) {
   if (pathname === '/') pathname = '/index.html';
   const filePath = path.join(PUBLIC_DIR, pathname);
 
-  if (!filePath.startsWith(PUBLIC_DIR)) {
+  // Guard con path.sep: startsWith a secas dejaría pasar hermanos tipo public-x
+  if (filePath !== PUBLIC_DIR && !filePath.startsWith(PUBLIC_DIR + path.sep)) {
     res.writeHead(403);
     return res.end('Forbidden');
   }
@@ -2217,10 +2419,23 @@ async function serveStatic(req, res, parsedUrl) {
 // Server boot
 // ============================================================
 
+// Header Basic esperado, precomputado una sola vez. La comparación por request
+// va por digest sha256 + timingSafeEqual: tiempo constante (no filtra prefijos)
+// y sin el requisito de longitudes iguales de timingSafeEqual.
+const EXPECTED_AUTH = TEMPO_PASSWORD
+  ? 'Basic ' + Buffer.from('tempo:' + TEMPO_PASSWORD).toString('base64')
+  : '';
+
 const server = http.createServer(async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  // CORS: solo si ALLOWED_ORIGIN está seteado. Sin la variable no se emite
+  // ningún header Access-Control-* y el navegador aplica same-origin (la app
+  // se sirve desde este mismo server y usa fetch relativos, no necesita CORS).
+  if (ALLOWED_ORIGIN) {
+    res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  }
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
@@ -2230,8 +2445,9 @@ const server = http.createServer(async (req, res) => {
   // Password gate (only active if TEMPO_PASSWORD is set)
   if (TEMPO_PASSWORD) {
     const hdr = req.headers.authorization || '';
-    const expected = 'Basic ' + Buffer.from('tempo:' + TEMPO_PASSWORD).toString('base64');
-    if (hdr !== expected) {
+    const a = crypto.createHash('sha256').update(hdr).digest();
+    const b = crypto.createHash('sha256').update(EXPECTED_AUTH).digest();
+    if (!crypto.timingSafeEqual(a, b)) {
       res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="Tempo"' });
       return res.end('Necesitás contraseña');
     }
@@ -2265,7 +2481,10 @@ if (args[0]) {
     try {
       const stat = await fs.stat(initial);
       if (stat.isDirectory()) {
-        await saveConfig({ vaultPath: initial });
+        // Read-modify-write para no pisar icsUrls (ver POST /api/vault)
+        const config = await getConfig();
+        config.vaultPath = initial;
+        await saveConfig(config);
         console.log(`  Vault preset to: ${initial}`);
       }
     } catch {}

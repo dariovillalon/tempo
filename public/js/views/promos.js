@@ -5,7 +5,7 @@ import { state, mutate } from '../state.js';
 import { uid, escapeHtml, todayKey } from '../utils.js';
 
 const expandedPromos = new Set(); // promos expandidas (por defecto colapsadas)
-const monthNow = () => new Date().toISOString().slice(0, 7);
+const monthNow = () => todayKey().slice(0, 7); // mes local, no UTC
 const usedThisMonth = (p) => (p.usedDates || []).some(d => (d || '').startsWith(monthNow()));
 const isExpired = (p) => p.validUntil && p.validUntil < todayKey();
 

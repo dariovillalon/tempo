@@ -5,7 +5,7 @@
 import { state, findProject, updateTask } from '../state.js';
 import { api } from '../api.js';
 import {
-  todayKey, addDays, dayName, minsBetween, minsToHrs, relTime, escapeHtml, pad,
+  todayKey, addDays, dayName, minsBetween, minsToHrs, relTime, escapeHtml, pad, pomodoroStreak,
 } from '../utils.js';
 import { router } from '../router.js';
 import { openProjectModal } from '../components/projectModal.js';
@@ -68,7 +68,7 @@ export const renderDashboard = (root) => {
     a.type === 'task.state' && /Hecho/.test(a.text || '') &&
     dayKeys.includes(todayKey(new Date(a.ts))));
 
-  const streak = computeStreak();
+  const streak = pomodoroStreak(state.pomodoroLog);
 
   // ---- Attention buckets ----
   const inboxCount = state.tasks.filter(t => t.state === 'inbox').length;
@@ -238,7 +238,7 @@ export const renderDashboard = (root) => {
                 ${doneThisWeek.slice(0, 12).map(a => `
                   <div class="activity-item">
                     <div class="when">${relTime(a.ts)}</div>
-                    <div class="text">${a.text || ''}</div>
+                    <div class="text">${escapeHtml(a.text || '')}</div>
                   </div>`).join('')}
               </div>`}
         </div>
@@ -249,7 +249,7 @@ export const renderDashboard = (root) => {
             ${(state.activity || []).slice(0, 16).map(a => `
               <div class="activity-item">
                 <div class="when">${relTime(a.ts)}</div>
-                <div class="text">${a.text || ''}</div>
+                <div class="text">${escapeHtml(a.text || '')}</div>
               </div>`).join('') || '<div class="muted text-sm" style="padding:8px 4px">Sin actividad.</div>'}
           </div>
         </div>
@@ -322,19 +322,6 @@ const renderProjectBreakdownByRoot = (rootStats) => {
       }).join('')}
     </div>
   `;
-};
-
-const computeStreak = () => {
-  const log = state.pomodoroLog || [];
-  if (!log.length) return 0;
-  const days = new Set(log.map(p => todayKey(new Date(p.completedAt))));
-  let streak = 0;
-  let cursor = new Date();
-  while (days.has(todayKey(cursor))) {
-    streak++;
-    cursor = addDays(cursor, -1);
-  }
-  return streak;
 };
 
 const loadUpcomingMeetings = async (root) => {

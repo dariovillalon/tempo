@@ -3,7 +3,7 @@
 import { api } from './api.js';
 import { state, initState, subscribe, getSaveStatus, runObsidianAutoImport, refreshTasksFromVault, reloadState } from './state.js';
 import { router } from './router.js';
-import { todayKey, fmtDate } from './utils.js';
+import { todayKey, fmtDate, escapeHtml } from './utils.js';
 import { initModals } from './components/modal.js';
 import { initBlockModal } from './components/blockModal.js';
 import { initTaskModal } from './components/taskModal.js';
@@ -69,7 +69,25 @@ const updateChrome = () => {
   renderSidebarProjects();
 };
 
+// Escapar el HTML crudo embebido en markdown antes de renderizarlo (notas del
+// vault y notas de proyecto usan window.marked.parse sobre archivos .md que
+// pueden traer <script>/<img onerror=...> pegados de la web). Central: cubre
+// los call sites de notes.js y project.js sin tocarlos.
+const hardenMarked = () => {
+  if (!window.marked?.use) return;
+  window.marked.use({
+    renderer: {
+      // marked v12+ pasa un token ({ text }); versiones viejas pasan un string.
+      html(token) {
+        const raw = typeof token === 'string' ? token : (token?.text ?? '');
+        return escapeHtml(raw);
+      },
+    },
+  });
+};
+
 const main = async () => {
+  hardenMarked();
   try {
     await initState();
   } catch (e) {
@@ -127,7 +145,7 @@ const main = async () => {
         toast(`Importé ${res.projects} proyecto(s) nuevo(s) de Obsidian`, 'success');
         router.refresh();
       }
-    }).catch(() => {});
+    }).catch((e) => console.warn('[auto-import] falló el auto-import de Obsidian', e));
   }
 
   // Re-render the current view when state changes happen.
@@ -196,7 +214,7 @@ const main = async () => {
     }
     if (e.key === '?') {
       e.preventDefault();
-      toast('g+t/d/c/b/p/n/w/s · n nueva tarea · pizarra: V/S/R/O/T/C/A · ⌘Z deshacer · ⌘K búsqueda', 'info');
+      toast('g+t/d/c/b/p/n/w/s · n nueva tarea · pizarra: V/S/R/O/T/C/A y ⌘Z deshacer · ⌘K búsqueda', 'info');
     }
   });
 

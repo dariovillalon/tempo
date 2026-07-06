@@ -16,7 +16,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/styles.css">
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- Pineado a la major que jsDelivr sirve hoy para este path (v15.0.12);
+       marked@16+ ya no publica marked.min.js, por eso el alias sin versión
+       quedó congelado en 15 y un cambio del CDN podría romper la app. -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
 </head>
 <body>
 

@@ -166,6 +166,7 @@ const paint = (root) => {
   wireTabs(root);
   wireCanvas(root);
   wireKeyboard(root);
+  wireGlobalMouse();
 };
 
 const itemHint = (t) => ({
@@ -604,10 +605,9 @@ const wireItem = (node, root) => {
     });
   }
 
-  // Drag (select tool) — also handles selection on click-without-drag
-  let drag = null;
-  let startMouse = null;
-  const DRAG_THRESHOLD = 4;
+  // Drag (select tool) — also handles selection on click-without-drag.
+  // El movimiento/suelta se maneja con UN solo par de listeners a nivel
+  // documento (wireGlobalMouse); acá solo se arma el estado activeDrag.
   node.addEventListener('mousedown', (e) => {
     if (tool !== 'select') return;
     if (e.target.closest('[data-x]')) return;
@@ -616,8 +616,9 @@ const wireItem = (node, root) => {
     if (textNode?.contentEditable === 'true') return;
     e.preventDefault();
     const rect = canvas.getBoundingClientRect();
-    startMouse = { x: e.clientX, y: e.clientY };
-    drag = {
+    activeDrag = {
+      node, id, root, canvas,
+      startMouse: { x: e.clientX, y: e.clientY },
       offX: e.clientX - rect.left + canvas.scrollLeft - parseFloat(node.style.left),
       offY: e.clientY - rect.top + canvas.scrollTop - parseFloat(node.style.top),
       moved: false,
@@ -625,31 +626,83 @@ const wireItem = (node, root) => {
     };
   });
 
+  // Resize handle — mismo esquema: estado en activeResize, listeners globales.
+  const handle = node.querySelector('[data-resize]');
+  if (handle) {
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      snapshot();
+      activeResize = {
+        node, id, root,
+        startX: e.clientX, startY: e.clientY,
+        w: parseFloat(node.style.width), h: parseFloat(node.style.height),
+      };
+    });
+  }
+};
+
+// ----- Global drag/resize listeners --------------------------------------
+// Un único par mousemove/mouseup a nivel documento (registrado una sola vez,
+// igual que wireKeyboard). Antes cada wireItem sumaba listeners que nunca se
+// removían y retenían nodos viejos en cada repaint.
+
+let activeDrag = null;   // { node, id, root, canvas, startMouse, offX, offY, moved, tookSnapshot }
+let activeResize = null; // { node, id, root, startX, startY, w, h }
+let mouseWired = false;
+const DRAG_THRESHOLD = 4;
+
+const wireGlobalMouse = () => {
+  if (mouseWired) return;
+  mouseWired = true;
+
   document.addEventListener('mousemove', (e) => {
-    if (!drag) return;
-    if (!drag.moved) {
-      if (Math.abs(e.clientX - startMouse.x) + Math.abs(e.clientY - startMouse.y) < DRAG_THRESHOLD) return;
-      drag.moved = true;
+    if (activeResize) {
+      const { node, id, root } = activeResize;
+      const w = Math.max(80, activeResize.w + (e.clientX - activeResize.startX));
+      const h = Math.max(40, activeResize.h + (e.clientY - activeResize.startY));
+      node.style.width = w + 'px';
+      node.style.height = h + 'px';
+      const wb = getActive();
+      const it = wb?.items.find(x => x.id === id);
+      if (it) { it.w = w; it.h = h; }
+      refreshConnectorsFor(id, root);
+      return;
+    }
+    if (!activeDrag) return;
+    const { node, id, root, canvas } = activeDrag;
+    if (!activeDrag.moved) {
+      if (Math.abs(e.clientX - activeDrag.startMouse.x) + Math.abs(e.clientY - activeDrag.startMouse.y) < DRAG_THRESHOLD) return;
+      activeDrag.moved = true;
       node.classList.add('dragging');
-      if (!drag.tookSnapshot) { snapshot(); drag.tookSnapshot = true; }
+      if (!activeDrag.tookSnapshot) { snapshot(); activeDrag.tookSnapshot = true; }
     }
     const rect = canvas.getBoundingClientRect();
-    const x = Math.max(0, e.clientX - rect.left + canvas.scrollLeft - drag.offX);
-    const y = Math.max(0, e.clientY - rect.top + canvas.scrollTop - drag.offY);
+    const x = Math.max(0, e.clientX - rect.left + canvas.scrollLeft - activeDrag.offX);
+    const y = Math.max(0, e.clientY - rect.top + canvas.scrollTop - activeDrag.offY);
     node.style.left = x + 'px';
     node.style.top = y + 'px';
     // Live update model so connector recompute reads fresh coords
     const wb = getActive();
-    const it = wb.items.find(x => x.id === id);
+    const it = wb?.items.find(x => x.id === id);
     if (it) { it.x = x; it.y = y; }
     refreshConnectorsFor(id, root);
   });
 
   document.addEventListener('mouseup', () => {
-    if (!drag) return;
-    const wasDrag = drag.moved;
-    drag = null;
-    startMouse = null;
+    if (activeResize) {
+      const { node, id } = activeResize;
+      activeResize = null;
+      updateWhiteboardItem(activeId, id, {
+        w: parseFloat(node.style.width),
+        h: parseFloat(node.style.height),
+      });
+      return;
+    }
+    if (!activeDrag) return;
+    const { node, id, root } = activeDrag;
+    const wasDrag = activeDrag.moved;
+    activeDrag = null;
     node.classList.remove('dragging');
     if (wasDrag) {
       updateWhiteboardItem(activeId, id, {
@@ -665,40 +718,6 @@ const wireItem = (node, root) => {
       });
     }
   });
-
-  // Resize handle
-  const handle = node.querySelector('[data-resize]');
-  if (handle) {
-    let rs = null;
-    handle.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      snapshot();
-      rs = {
-        startX: e.clientX, startY: e.clientY,
-        w: parseFloat(node.style.width), h: parseFloat(node.style.height),
-      };
-    });
-    document.addEventListener('mousemove', (e) => {
-      if (!rs) return;
-      const w = Math.max(80, rs.w + (e.clientX - rs.startX));
-      const h = Math.max(40, rs.h + (e.clientY - rs.startY));
-      node.style.width = w + 'px';
-      node.style.height = h + 'px';
-      const wb = getActive();
-      const it = wb.items.find(x => x.id === id);
-      if (it) { it.w = w; it.h = h; }
-      refreshConnectorsFor(id, root);
-    });
-    document.addEventListener('mouseup', () => {
-      if (!rs) return;
-      updateWhiteboardItem(activeId, id, {
-        w: parseFloat(node.style.width),
-        h: parseFloat(node.style.height),
-      });
-      rs = null;
-    });
-  }
 };
 
 // ----- Inline text editing ----------------------------------------------

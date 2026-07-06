@@ -1,7 +1,7 @@
 // vaultModal.js — connect / inspect Obsidian vault
 
 import { api } from '../api.js';
-import { state, setVault } from '../state.js';
+import { state, setVault, syncServerRev } from '../state.js';
 import { openModal, closeModal } from './modal.js';
 import { toast } from './toast.js';
 import { router } from '../router.js';
@@ -107,6 +107,7 @@ export const initVaultModal = () => {
     try {
       const res = await api.connectVault(target);
       if (res.error) { toast(res.error, 'error'); return; }
+      syncServerRev(res.rev); // el server bumpeó rev al persistir state.vault
       setVault(res.vault);
       toast(`Vault conectado · ${res.vault.notes} notas`, 'success');
       closeModal('modal-vault');

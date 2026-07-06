@@ -6,7 +6,11 @@ const json = async (res) => {
     let err;
     try { err = ct.includes('json') ? await res.json() : await res.text(); }
     catch { err = res.statusText; }
-    throw new Error(typeof err === 'string' ? err : (err.error || res.statusText));
+    const error = new Error(typeof err === 'string' ? err : (err.error || res.statusText));
+    error.status = res.status;
+    // El PUT /api/state devuelve el rev vigente en un 409 (conflicto de versiones)
+    if (err && typeof err === 'object' && err.rev !== undefined) error.rev = err.rev;
+    throw error;
   }
   return ct.includes('json') ? res.json() : res.text();
 };
@@ -14,10 +18,10 @@ const json = async (res) => {
 export const api = {
   health:        () => fetch('/api/health').then(json),
   getState:      () => fetch('/api/state').then(json),
-  putState:      (state) => fetch('/api/state', {
+  putState:      (state, rev) => fetch('/api/state', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ state })
+                    body: JSON.stringify({ state, rev })
                   }).then(json),
   getConfig:     () => fetch('/api/config').then(json),
   connectVault:  (path) => fetch('/api/vault', {

@@ -6,6 +6,7 @@ import { toast } from './toast.js';
 import { router } from '../router.js';
 import { escapeHtml, debounce, todayKey, addDays } from '../utils.js';
 import { openTaskModal } from './taskModal.js';
+import { queueVaultFile } from '../views/notes.js';
 
 // Parse "tarea texto @viernes #high 🍅3 +Snowflake" into structured fields.
 // Recognised tokens (any order, anywhere):
@@ -94,6 +95,7 @@ let notesCacheAt = 0;
 let searchAbort = null;
 let searchHits = [];
 let searchQuery = '';
+let lastSearchErrToast = 0;
 
 const close = () => {
   backdrop.classList.remove('open');
@@ -215,7 +217,17 @@ const runVaultSearch = debounce(async () => {
     searchHits = res.hits || [];
     searchQuery = q;
     render();
-  } catch {}
+  } catch (e) {
+    // Marcar la query como resuelta (sin hits) para no mostrar resultados viejos
+    searchHits = [];
+    searchQuery = q;
+    render();
+    // Throttle: corre por tecleo (debounced), un toast por error cada 10s alcanza
+    if (Date.now() - lastSearchErrToast > 10_000) {
+      lastSearchErrToast = Date.now();
+      toast('Búsqueda en el vault falló: ' + e.message, 'error');
+    }
+  }
 }, 350);
 
 const debouncedRender = debounce(() => { render(); runVaultSearch(); }, 80);
@@ -232,9 +244,11 @@ const execute = () => {
   if (item?.kind === 'open-task') { close(); openTaskModal({ id: item.taskId }); return; }
   if (item?.kind === 'open-note') { router.go('notes'); close(); return; }
   if (item?.kind === 'open-vault-file') {
-    // Notes view picks up the path from window.__pendingVaultPath
-    window.__pendingVaultPath = item.vaultPath;
-    router.go('notes');
+    // Deep-link one-shot: se encola en notes.js y se navega a 'notes' pelado
+    // (una ruta 'notes/<path>' persistente re-abriría el archivo en cada refresh)
+    queueVaultFile(item.vaultPath);
+    if (router.current().split('/')[0] === 'notes') router.refresh();
+    else router.go('notes');
     close();
     return;
   }

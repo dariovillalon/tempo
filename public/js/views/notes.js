@@ -25,11 +25,26 @@ const loadVault = async () => {
   }
 };
 
-export const renderNotes = (root) => {
-  // Pickup from quick capture's full-text search: jump to a specific file
-  const pending = window.__pendingVaultPath;
+// Deep-link one-shot: quien quiera abrir un archivo puntual (quick capture)
+// lo encola acá y navega a 'notes'. Es estado de módulo (import tipado, no un
+// global en window) y se consume UNA vez: app.js re-renderiza la vista en cada
+// mutación/focus vía router.refresh(), y un deep-link que se re-aplicara en
+// cada refresh pisaría lo que el usuario seleccionó después en el árbol.
+let queuedPath = null;
+export const queueVaultFile = (path) => { queuedPath = path; };
+
+// pendingArg: solo llega desde una ruta legacy 'notes/<path>' que haya quedado
+// persistida en lastUsed.view; mismo tratamiento one-shot.
+let consumedArg = null;
+export const renderNotes = (root, pendingArg) => {
+  let incoming = queuedPath;
+  queuedPath = null;
+  if (!incoming && pendingArg && pendingArg !== consumedArg) {
+    incoming = pendingArg;
+    consumedArg = pendingArg;
+  }
+  const pending = incoming && incoming !== selectedPath ? incoming : null;
   if (pending) {
-    delete window.__pendingVaultPath;
     selectedPath = pending;
     selectedContent = null;
     // expand all parent folders so the file is visible in the tree
@@ -40,7 +55,9 @@ export const renderNotes = (root) => {
   paint(root);
   if (state.vault?.path && !vaultTree) loadVault().then(() => paint(root));
   if (pending) {
-    api.getVaultFile(pending).then(r => { selectedContent = r.content; paint(root); }).catch(() => {});
+    api.getVaultFile(pending)
+      .then(r => { selectedContent = r.content; paint(root); })
+      .catch((e) => { toast('No pude leer: ' + e.message, 'error'); });
   }
 };
 

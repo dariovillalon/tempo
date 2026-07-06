@@ -26,6 +26,13 @@ export const el = (tag, attrs = {}, children = []) => {
 export const escapeHtml = (s = '') =>
   String(s).replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 
+// Solo http/https en links cargados por el usuario (bloquea javascript:, data:, etc.)
+export const sanitizeUrl = (url = '') => {
+  const s = String(url).trim();
+  if (!/^https?:\/\//i.test(s)) return null;
+  try { new URL(s); return s; } catch { return null; }
+};
+
 // ----- Date helpers -----
 export const pad = n => String(n).padStart(2, '0');
 
@@ -50,6 +57,20 @@ export const addDays = (d, n) => {
   const x = new Date(d);
   x.setDate(x.getDate() + n);
   return x;
+};
+
+// Racha: días consecutivos (terminando hoy) con al menos un pomodoro registrado.
+// Recibe el log para no acoplar utils a state (state.js importa de utils.js).
+export const pomodoroStreak = (log = []) => {
+  if (!log.length) return 0;
+  const days = new Set(log.map(p => todayKey(new Date(p.completedAt))));
+  let streak = 0;
+  let cursor = new Date();
+  while (days.has(todayKey(cursor))) {
+    streak++;
+    cursor = addDays(cursor, -1);
+  }
+  return streak;
 };
 
 export const fmtTime = (mins) => {

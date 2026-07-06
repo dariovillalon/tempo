@@ -1,7 +1,7 @@
 // settings.js — preferences, theme, vault, data export/import
 
 import {
-  state, updateSettings, updatePomodoroSettings, setVault,
+  state, updateSettings, updatePomodoroSettings, setVault, syncServerRev,
   runObsidianAutoImport, removeAllVaultLinkedProjects, removeAllTasks,
   getAssignees, addAssignee, updateAssignee, removeAssignee,
 } from '../state.js';
@@ -308,7 +308,11 @@ export const renderSettings = (root) => {
   const vd = root.querySelector('#vault-disconnect');
   if (vd) vd.addEventListener('click', async () => {
     if (!confirm('¿Desconectar el vault?')) return;
-    try { await api.disconnectVault(); setVault(null); toast('Vault desconectado'); router.refresh(); }
+    try {
+      const res = await api.disconnectVault();
+      syncServerRev(res?.rev); // el server bumpeó rev al reflejar la desconexión
+      setVault(null); toast('Vault desconectado'); router.refresh();
+    }
     catch (e) { toast('Error: ' + e.message, 'error'); }
   });
 

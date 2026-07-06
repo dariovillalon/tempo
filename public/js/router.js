@@ -41,7 +41,8 @@ const renderView = (route) => {
 
   // Clear interval/cleanup if previous view registered one
   if (window._viewCleanup) {
-    try { window._viewCleanup(); } catch {}
+    // Un cleanup que tira puede dejar intervals/listeners colgados entre vistas
+    try { window._viewCleanup(); } catch (e) { console.warn('[router] view cleanup falló', e); }
     window._viewCleanup = null;
   }
 
@@ -60,7 +61,7 @@ const renderView = (route) => {
     case 'board':      renderBoard(root); break;
     case 'whiteboard': renderWhiteboard(root); break;
     case 'pomodoro':   renderPomodoro(root); break;
-    case 'notes':      renderNotes(root); break;
+    case 'notes':      renderNotes(root, arg); break;
     case 'btcAlerts':  renderBtcAlerts(root); break;
     case 'fitness':    renderFitness(root); break;
     case 'mytime':     renderMyTime(root); break;

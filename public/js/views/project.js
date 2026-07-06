@@ -3,7 +3,7 @@
 import { state, findProject, updateTask, TASK_STATES, addTask, tasksForProject } from '../state.js';
 import { api } from '../api.js';
 import {
-  todayKey, addDays, dayName, minsBetween, minsToHrs, relTime, escapeHtml,
+  todayKey, addDays, dayName, minsBetween, minsToHrs, relTime, escapeHtml, sanitizeUrl,
 } from '../utils.js';
 import { router } from '../router.js';
 import { openProjectModal } from '../components/projectModal.js';
@@ -359,7 +359,7 @@ export const renderProject = (root, id) => {
             ${proj_activity.map(a => `
               <div class="activity-item">
                 <div class="when">${relTime(a.ts)}</div>
-                <div class="text">${a.text}</div>
+                <div class="text">${escapeHtml(a.text || '')}</div>
               </div>`).join('') || '<div class="muted text-sm">Sin actividad aún</div>'}
           </div>
         </div>
@@ -595,7 +595,7 @@ const renderWhereWeLeft = (host, p) => {
           <div>
             <div class="where-label">Última actividad</div>
             <div class="where-content">
-              <div class="text-sm">${lastActivity.text || ''}</div>
+              <div class="text-sm">${escapeHtml(lastActivity.text || '')}</div>
               <div class="text-xs muted" style="margin-top:2px">${relTime(lastActivity.ts)}</div>
             </div>
           </div>` : ''}
@@ -612,9 +612,9 @@ const renderResources = async (host, p) => {
   if (!host) return;
   const seen = new Set();
   const all = [];
-  // 1) Manuales (state)
+  // 1) Manuales (state) — solo URLs http/https (defensa extra: el state puede venir de imports)
   for (const r of (p.resources || [])) {
-    if (!r?.url || seen.has(r.url)) continue;
+    if (!r?.url || !sanitizeUrl(r.url) || seen.has(r.url)) continue;
     seen.add(r.url);
     all.push({ url: r.url, label: r.label || null, ...classifyResource(r.url) });
   }
@@ -623,7 +623,7 @@ const renderResources = async (host, p) => {
     const content = await loadIndexFor(p);
     if (content) {
       for (const r of parseResources(content)) {
-        if (seen.has(r.url)) continue;
+        if (!sanitizeUrl(r.url) || seen.has(r.url)) continue;
         seen.add(r.url);
         all.push(r);
       }

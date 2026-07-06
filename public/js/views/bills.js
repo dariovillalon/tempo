@@ -2,7 +2,8 @@
 // marcás "pagado" cada período y al siguiente se resetea solo.
 
 import { state, mutate } from '../state.js';
-import { uid, escapeHtml } from '../utils.js';
+import { uid, escapeHtml, todayKey, sanitizeUrl } from '../utils.js';
+import { toast } from '../components/toast.js';
 
 const FREQS = [['mensual', 'Mensual'], ['bimestral', 'Bimestral'], ['anual', 'Anual'], ['puntual', 'Puntual']];
 const FREQ_LBL = Object.fromEntries(FREQS);
@@ -13,6 +14,8 @@ const MESES = ['', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio
 const fmtPeriod = (pk) => {
   if (pk === 'once') return 'Pagos puntuales';
   if (/^\d{4}$/.test(pk)) return `Año ${pk}`;
+  const bi = pk.match(/^(\d{4})-B(\d{2})$/); // bimestral: YYYY-B01, YYYY-B03…
+  if (bi) return `${MESES[+bi[2]]}–${MESES[+bi[2] + 1]} ${bi[1]}`;
   const [y, m] = pk.split('-');
   return `${MESES[+m] || m} ${y}`;
 };
@@ -20,7 +23,10 @@ const fmtPeriod = (pk) => {
 function historyView() {
   const map = {};
   for (const b of state.bills) for (const pk of (b.paidMonths || [])) (map[pk] ||= []).push({ name: b.name, amount: parseFloat(b.amount) || 0 });
-  const keys = Object.keys(map).sort().reverse();
+  // Orden cronológico real: 'YYYY-Bnn' se compara por su mes de apertura
+  // (lexicográficamente la 'B' quedaría después de cualquier mes del año).
+  const norm = (k) => k.replace(/-B(\d{2})$/, '-$1');
+  const keys = Object.keys(map).sort((a, b) => norm(a).localeCompare(norm(b))).reverse();
   if (!keys.length) return '<div class="card"><div class="muted text-xs">Todavía no marcaste ninguna cuenta como pagada. Cuando marques "Pagado", queda registrado acá por mes.</div></div>';
   return keys.map(pk => {
     const items = map[pk]; const total = items.reduce((s, i) => s + i.amount, 0);
@@ -34,9 +40,31 @@ const periodKey = (freq) => {
   const now = new Date();
   if (freq === 'anual') return String(now.getFullYear());
   if (freq === 'puntual') return 'once';
-  return now.toISOString().slice(0, 7); // mensual / bimestral -> YYYY-MM
+  if (freq === 'bimestral') {
+    // Período real de 2 meses (ene–feb, mar–abr…), clave por el mes impar que lo abre.
+    const bi = Math.floor(now.getMonth() / 2) * 2 + 1;
+    return `${now.getFullYear()}-B${String(bi).padStart(2, '0')}`;
+  }
+  return todayKey().slice(0, 7); // mensual -> YYYY-MM (fecha local, no UTC)
 };
-const isPaid = (b) => (b.paidMonths || []).includes(periodKey(b.frequency || 'mensual'));
+// Claves legacy de un bimestral: antes del formato YYYY-Bnn se guardaba el mes
+// suelto YYYY-MM; un pago marcado en cualquiera de los 2 meses del bimestre
+// actual sigue contando como pagado (migración suave, sin tocar datos).
+const legacyBimestralKeys = () => {
+  const now = new Date();
+  const open = Math.floor(now.getMonth() / 2) * 2 + 1; // mes impar que abre el bimestre
+  return [open, open + 1].map(m => `${now.getFullYear()}-${String(m).padStart(2, '0')}`);
+};
+const paidKeysFor = (b) => {
+  const freq = b.frequency || 'mensual';
+  const keys = [periodKey(freq)];
+  if (freq === 'bimestral') keys.push(...legacyBimestralKeys());
+  return keys;
+};
+const isPaid = (b) => {
+  const paid = b.paidMonths || [];
+  return paidKeysFor(b).some(k => paid.includes(k));
+};
 
 const addBill = (data) => mutate(s => { s.bills.push({ id: uid(), name: data.name || '', amount: data.amount || '', frequency: data.frequency || 'mensual', dueDay: data.dueDay || '', payMethod: data.payMethod || '', url: data.url || '', notes: '', paidMonths: [] }); });
 const patchBill = (id, patch) => mutate(s => { const b = s.bills.find(x => x.id === id); if (b) Object.assign(b, patch); });
@@ -44,8 +72,12 @@ const delBill = (id) => mutate(s => { s.bills = s.bills.filter(x => x.id !== id)
 const togglePaid = (id) => mutate(s => {
   const b = s.bills.find(x => x.id === id); if (!b) return;
   b.paidMonths = b.paidMonths || [];
-  const pk = periodKey(b.frequency || 'mensual');
-  b.paidMonths = b.paidMonths.includes(pk) ? b.paidMonths.filter(x => x !== pk) : [...b.paidMonths, pk];
+  // Desmarcar tiene que sacar también las claves legacy del período (si no,
+  // un bimestral marcado con el formato viejo quedaría "pagado" para siempre).
+  const keys = paidKeysFor(b);
+  b.paidMonths = keys.some(k => b.paidMonths.includes(k))
+    ? b.paidMonths.filter(x => !keys.includes(x))
+    : [...b.paidMonths, periodKey(b.frequency || 'mensual')];
 });
 
 export const renderBills = (root) => {
@@ -56,6 +88,7 @@ export const renderBills = (root) => {
 
   const billCard = (b) => {
     const paidNow = isPaid(b);
+    const safeUrl = sanitizeUrl(b.url); // solo http/https; si no, se muestra como texto plano
     const open = expandedBills.has(b.id);
     const meta = [FREQ_LBL[b.frequency || 'mensual'], b.dueDay ? `vence ${b.dueDay}` : '', b.payMethod].filter(Boolean).join(' · ');
     return `<div class="bill ${paidNow ? 'is-paid' : ''} ${open ? 'is-open' : ''}">
@@ -74,7 +107,7 @@ export const renderBills = (root) => {
         <input type="text" class="input bill-method" data-bid="${b.id}" data-f="payMethod" value="${escapeHtml(b.payMethod || '')}" placeholder="Cómo pago (Ppay, débito…)">
       </div>
       <input type="text" class="input bill-url" data-bid="${b.id}" data-f="url" value="${escapeHtml(b.url || '')}" placeholder="Link de pago (opcional)">
-      ${b.url ? `<a href="${escapeHtml(b.url)}" target="_blank" rel="noopener" class="bill-link">↗ Abrir link de pago</a>` : ''}
+      ${b.url ? (safeUrl ? `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener" class="bill-link">↗ Abrir link de pago</a>` : `<span class="bill-link muted" title="Link inválido — solo http/https">${escapeHtml(b.url)}</span>`) : ''}
       <textarea class="textarea bill-notes" data-bid="${b.id}" data-f="notes" rows="1" placeholder="Notas (nº de cliente, observaciones…)">${escapeHtml(b.notes || '')}</textarea>` : ''}
     </div>`;
   };
@@ -114,5 +147,9 @@ export const renderBills = (root) => {
   all('[data-btoggle]').forEach(b => b.addEventListener('click', () => { const id = b.dataset.btoggle; if (expandedBills.has(id)) expandedBills.delete(id); else expandedBills.add(id); renderBills(root); }));
   all('[data-bpaid]').forEach(c => c.addEventListener('change', () => togglePaid(c.dataset.bpaid)));
   all('[data-bdelete]').forEach(b => b.addEventListener('click', () => delBill(b.dataset.bdelete)));
-  all('[data-bid][data-f]').forEach(el => el.addEventListener('change', () => patchBill(el.dataset.bid, { [el.dataset.f]: el.value })));
+  all('[data-bid][data-f]').forEach(el => el.addEventListener('change', () => {
+    // Se guarda igual (puede ser un link a medio pegar), pero avisamos; el render nunca linkea URLs inválidas.
+    if (el.dataset.f === 'url' && el.value.trim() && !sanitizeUrl(el.value)) toast('El link de pago debe empezar con http:// o https://', 'error');
+    patchBill(el.dataset.bid, { [el.dataset.f]: el.value });
+  }));
 };

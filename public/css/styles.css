@@ -1926,9 +1926,26 @@ a:hover { text-decoration: underline; }
   transition: all 0.22s ease;
   z-index: 300;
 }
-.toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+/* pointer-events: auto — el toast puede llevar un botón de acción ("Reintentar")
+   y el .toast base tiene pointer-events: none, que lo haría inclickeable */
+.toast.show { transform: translateX(-50%) translateY(0); opacity: 1; pointer-events: auto; }
 .toast.success { border-color: var(--green); }
 .toast.error { border-color: var(--red); }
+
+.toast .toast-action {
+  margin-left: 10px;
+  padding: 3px 10px;
+  background: transparent;
+  border: 1px solid var(--border-2);
+  border-radius: 14px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.toast .toast-action:hover { background: var(--surface-2); border-color: var(--text-3); }
 
 /* ============================================================
    Misc utilities

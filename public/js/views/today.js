@@ -2,7 +2,7 @@
 
 import { state, updateTask, findProject } from '../state.js';
 import { api } from '../api.js';
-import { todayKey, fmtDate, dayName, minsBetween, minsToHrs, escapeHtml, addDays, pad } from '../utils.js';
+import { todayKey, fmtDate, dayName, minsBetween, minsToHrs, escapeHtml, addDays, pad, pomodoroStreak } from '../utils.js';
 import { router } from '../router.js';
 import { openTaskModal } from '../components/taskModal.js';
 import { openBlockModal } from '../components/blockModal.js';
@@ -105,19 +105,6 @@ const greeting = () => {
   return 'Buenas noches';
 };
 
-const computeStreak = () => {
-  const log = state.pomodoroLog || [];
-  if (!log.length) return 0;
-  const days = new Set(log.map(p => todayKey(new Date(p.completedAt))));
-  let streak = 0;
-  let cursor = new Date();
-  while (days.has(todayKey(cursor))) {
-    streak++;
-    cursor = addDays(cursor, -1);
-  }
-  return streak;
-};
-
 export const renderToday = (root) => {
   const tk = todayKey();
   const today = new Date();
@@ -133,7 +120,7 @@ export const renderToday = (root) => {
   const overdueTasks = state.tasks.filter(t =>
     t.state !== 'done' && t.due && t.due < tk).length;
 
-  const streak = computeStreak();
+  const streak = pomodoroStreak(state.pomodoroLog);
 
   const dueToday = state.tasks.filter(t =>
     (t.due === tk || t.state === 'doing') && t.state !== 'done')

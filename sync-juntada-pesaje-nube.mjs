@@ -12,49 +12,85 @@ const localWeigh = (lf.weighIns || []).find(w => w.date === WEIGH_DATE);
 
 const { default: Pg } = await import('pg');
 const pool = new Pg.Pool({ connectionString: url, ssl: { rejectUnauthorized: false } });
+const client = await pool.connect();
 
-const r = await pool.query("SELECT data FROM kv WHERE key = 'state'");
-if (!r.rows.length) { console.error('No encontré el state en la nube. Aborto.'); await pool.end(); process.exit(1); }
-const web = r.rows[0].data;
-web.fitness = web.fitness || {};
-web.fitness.days = web.fitness.days || {};
-web.fitness.weighIns = web.fitness.weighIns || [];
+try {
+  // Transacción con lock de fila: evita pisar escrituras concurrentes (web abierta u otro script).
+  await client.query('BEGIN');
+  const r = await client.query("SELECT data FROM kv WHERE key = 'state' FOR UPDATE");
+  if (!r.rows.length) {
+    console.error('No encontré el state en la nube. Aborto.');
+    await client.query('ROLLBACK');
+    client.release();
+    await pool.end();
+    process.exit(1);
+  }
+  const web = r.rows[0].data;
+  web.fitness = web.fitness || {};
+  web.fitness.days = web.fitness.days || {};
+  web.fitness.weighIns = web.fitness.weighIns || [];
 
-// --- merge de comidas de cada día (por id, sin duplicar) ---
-for (const DIA of DIAS) {
-  const localDay = (lf.days || {})[DIA] || {};
-  const webDay = web.fitness.days[DIA] || {};
-  const webMeals = Array.isArray(webDay.meals) ? webDay.meals : [];
-  const ids = new Set(webMeals.map(m => m.id));
-  const merged = [...webMeals];
-  for (const m of (localDay.meals || [])) if (!ids.has(m.id)) merged.push(m);
-  const before = webMeals.length;
-  const out = { ...webDay, meals: merged };
-  out.calories = merged.reduce((a, m) => a + (m.kcal || 0), 0);
-  out.protein  = merged.reduce((a, m) => a + (m.protein || 0), 0);
-  web.fitness.days[DIA] = out;
-  console.log(`OK comidas ${DIA}: ${before} -> ${merged.length} (${out.calories} kcal / ${out.protein} g prot)`);
+  // --- merge de comidas de cada día (por id, sin duplicar) ---
+  for (const DIA of DIAS) {
+    const localDay = (lf.days || {})[DIA] || {};
+    const webDay = web.fitness.days[DIA] || {};
+    const webMeals = Array.isArray(webDay.meals) ? webDay.meals : [];
+    const ids = new Set(webMeals.map(m => m.id));
+    const merged = [...webMeals];
+    for (const m of (localDay.meals || [])) if (!ids.has(m.id)) merged.push(m);
+    const before = webMeals.length;
+    const out = { ...webDay, meals: merged };
+    out.calories = merged.reduce((a, m) => a + (m.kcal || 0), 0);
+    out.protein  = merged.reduce((a, m) => a + (m.protein || 0), 0);
+    web.fitness.days[DIA] = out;
+    console.log(`OK comidas ${DIA}: ${before} -> ${merged.length} (${out.calories} kcal / ${out.protein} g prot)`);
+  }
+
+  // --- pesaje del 28/06 (reemplaza si ya existe ese día) ---
+  let weighMsg = 'sin pesaje local para esa fecha';
+  if (localWeigh) {
+    web.fitness.weighIns = web.fitness.weighIns.filter(w => w.date !== WEIGH_DATE);
+    web.fitness.weighIns.push(localWeigh);
+    web.fitness.weighIns.sort((a, b) => a.date < b.date ? -1 : 1);
+    weighMsg = `${localWeigh.kg} kg cargado`;
+  }
+
+  // --- biblioteca de alimentos (merge por id: agrega los nuevos, no borra los de la nube) ---
+  const localLib = lf.foodLibrary || [];
+  const webLib = Array.isArray(web.fitness.foodLibrary) ? web.fitness.foodLibrary : [];
+  const libIds = new Set(webLib.map(x => x.id));
+  let libAdded = 0;
+  for (const item of localLib) if (!libIds.has(item.id)) { webLib.push(item); libAdded++; }
+  web.fitness.foodLibrary = webLib;
+
+  // --- promociones (merge por id: agrega las nuevas, no borra las de la nube) ---
+  const localPromos = local.promos || [];
+  const webPromos = Array.isArray(web.promos) ? web.promos : [];
+  const promoIds = new Set(webPromos.map(p => p.id));
+  let promoAdded = 0;
+  for (const p of localPromos) if (!promoIds.has(p.id)) { webPromos.push(p); promoAdded++; }
+  web.promos = webPromos;
+
+  // --- bloques de agenda (merge por id: agrega los nuevos, no borra los de la nube) ---
+  const localBlocks = local.blocks || [];
+  const webBlocks = Array.isArray(web.blocks) ? web.blocks : [];
+  const blockIds = new Set(webBlocks.map(b => b.id));
+  let blocksAdded = 0;
+  for (const b of localBlocks) if (!blockIds.has(b.id)) { webBlocks.push(b); blocksAdded++; }
+  web.blocks = webBlocks;
+
+  web.rev = (web.rev | 0) + 1; // optimistic locking: las pestañas con rev viejo reciben 409
+  await client.query("UPDATE kv SET data = $1 WHERE key = 'state'", [JSON.stringify(web)]);
+  await client.query('COMMIT');
+  console.log(`OK pesaje ${WEIGH_DATE}: ${weighMsg}`);
+  console.log(`OK biblioteca: +${libAdded} item(s) nuevo(s) (total ${webLib.length})`);
+  console.log(`OK promociones: +${promoAdded} nueva(s) (total ${webPromos.length})`);
+  console.log(`OK agenda: +${blocksAdded} bloque(s) nuevo(s) (total ${webBlocks.length})`);
+  console.log('Listo. Recargá la web con Cmd+Shift+R.');
+} catch (e) {
+  try { await client.query('ROLLBACK'); } catch {}
+  throw e;
+} finally {
+  client.release();
+  await pool.end();
 }
-
-// --- pesaje del 28/06 (reemplaza si ya existe ese día) ---
-let weighMsg = 'sin pesaje local para esa fecha';
-if (localWeigh) {
-  web.fitness.weighIns = web.fitness.weighIns.filter(w => w.date !== WEIGH_DATE);
-  web.fitness.weighIns.push(localWeigh);
-  web.fitness.weighIns.sort((a, b) => a.date < b.date ? -1 : 1);
-  weighMsg = `${localWeigh.kg} kg cargado`;
-}
-
-// --- biblioteca de alimentos (merge por id: agrega los nuevos, no borra los de la nube) ---
-const localLib = lf.foodLibrary || [];
-const webLib = Array.isArray(web.fitness.foodLibrary) ? web.fitness.foodLibrary : [];
-const libIds = new Set(webLib.map(x => x.id));
-let libAdded = 0;
-for (const item of localLib) if (!libIds.has(item.id)) { webLib.push(item); libAdded++; }
-web.fitness.foodLibrary = webLib;
-
-await pool.query("UPDATE kv SET data = $1 WHERE key = 'state'", [JSON.stringify(web)]);
-await pool.end();
-console.log(`OK pesaje ${WEIGH_DATE}: ${weighMsg}`);
-console.log(`OK biblioteca: +${libAdded} item(s) nuevo(s) (total ${webLib.length})`);
-console.log('Listo. Recargá la web con Cmd+Shift+R.');

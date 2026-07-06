@@ -20,9 +20,17 @@ const rootProjects = () =>
 const subprojectsOf = (parentId) =>
   state.projects.filter(p => p.status !== 'archived' && p.parentId === parentId);
 
-const fillStateAndProjectSel = (selectedProjectId) => {
+const fillStateAndProjectSel = (selectedProjectId, currentState) => {
   const stateSel = document.getElementById('task-state');
   stateSel.innerHTML = TASK_STATES.map(s => `<option value="${s.id}">${s.label}</option>`).join('');
+  // 'archived' no está en TASK_STATES (archiveDoneTasks lo asigna directo).
+  // Sin esta opción, asignar 'archived' al <select> deja selectedIndex -1 y
+  // .value '' — y Guardar escribiría state:'' (la tarea desaparece de todos
+  // los boards). Con la opción visible además se puede des-archivar eligiendo
+  // otro estado.
+  if (currentState === 'archived') {
+    stateSel.insertAdjacentHTML('beforeend', '<option value="archived">Archivada</option>');
+  }
 
   const projSel = document.getElementById('task-project');
   projSel.innerHTML = '<option value="">— sin proyecto —</option>' +
@@ -67,7 +75,7 @@ export const openTaskModal = (data = {}) => {
   const projectId = t?.projectId || data.projectId || '';
   const { rootId, subId } = resolveProjectPair(projectId);
 
-  fillStateAndProjectSel(rootId);
+  fillStateAndProjectSel(rootId, t?.state);
   refreshSubprojectSel(rootId, subId);
 
   document.getElementById('task-modal-title').textContent = t ? 'Editar tarea' : 'Nueva tarea';
@@ -189,9 +197,12 @@ export const initTaskModal = () => {
   document.getElementById('task-save').addEventListener('click', () => {
     const root = document.getElementById('task-project').value || null;
     const sub = document.getElementById('task-subproject').value || null;
+    // Guardia defensiva: si el <select> quedó sin selección (value ''), caer
+    // al estado previo de la tarea (o 'inbox') en vez de corromperla con ''.
+    const prevTask = editingId ? state.tasks.find(x => x.id === editingId) : null;
     const data = {
       text: document.getElementById('task-text').value.trim(),
-      state: document.getElementById('task-state').value,
+      state: document.getElementById('task-state').value || prevTask?.state || 'inbox',
       // If a subproject is chosen, the task lives under it; otherwise under the root.
       projectId: sub || root,
       pomodoros: Number(document.getElementById('task-pomodoros').value) || 0,
