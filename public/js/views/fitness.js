@@ -1068,18 +1068,52 @@ function bodyGym() {
   const mainRows = day.exercises.map(renderEx).join('');
   const core = coreForDay(gymDayIndex);
   const coreRows = `<div class="fit-section-h">🎾 Core / rotación (tenis y pádel)</div>` + core.map((ex, idx) => renderEx(ex, day.exercises.length + idx)).join('');
-  const log = `<div class="card"><div class="card-title">Registrar sesión — ${escapeHtml(day.name)}</div><div class="muted text-xs" style="margin-bottom:6px">Cargá kg y reps de cada serie. Dejá vacías las que no hagas: cuento las que llenes (hasta 4).</div>${mainRows}${coreRows}<button class="btn btn-primary btn-sm" id="fit-gym-save" style="margin-top:12px">Guardar sesión</button></div>`;
+  // Sesión libre: nombre propio (se guarda sin día del plan) + ejercicios sueltos fuera del plan.
+  const freeUI = `<div class="fit-free" style="margin-top:14px;border-top:1px solid var(--border-2);padding-top:12px">
+      <div class="fit-section-h">🏷️ Sesión libre (sin día del plan)</div>
+      <div class="muted text-xs" style="margin-bottom:6px">Si hoy no seguiste un día del plan, poné el nombre de la sesión (ej: "Espalda + bíceps") y sumá los ejercicios que hiciste. Se guarda con ese nombre, sin pisar el plan.</div>
+      <input type="text" class="input" id="fit-free-name" placeholder="Nombre de la sesión (opcional)" style="width:100%">
+      <div class="row gap-6" style="margin-top:8px;flex-wrap:wrap">
+        <input type="text" class="input" id="fit-free-ex" placeholder="Ejercicio suelto (ej: Jalón al pecho)" style="flex:1;min-width:170px">
+        <button class="btn btn-secondary btn-sm" id="fit-free-add" type="button">+ Agregar ejercicio</button>
+      </div>
+      <div id="fit-free-list"></div>
+    </div>`;
+  const log = `<div class="card"><div class="card-title">Registrar sesión — ${escapeHtml(day.name)}</div><div class="muted text-xs" style="margin-bottom:6px">Cargá kg y reps de cada serie. Dejá vacías las que no hagas: cuento las que llenes (hasta 4).</div>${mainRows}${coreRows}${freeUI}<button class="btn btn-primary btn-sm" id="fit-gym-save" style="margin-top:12px">Guardar sesión</button></div>`;
   const logs = [...(f.workoutLogs || [])].sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 12);
-  const hist = logs.length ? logs.map(l => `<div class="fit-log"><div class="fit-log-head"><strong>${fmtDay(l.date)}</strong> · ${escapeHtml(l.dayName || '')}<button class="btn btn-ghost btn-sm" data-del-log="${l.id}" style="float:right">✕</button></div><div class="fit-log-body">${(l.entries || []).map(e => {
+  const hist = logs.length ? logs.map(l => `<div class="fit-log"><div class="fit-log-head"><strong>${fmtDay(l.date)}</strong> · ${escapeHtml(l.dayName || '')}${l.dayIndex == null ? ' <span class="muted text-xs">(libre)</span>' : ''}<button class="btn btn-ghost btn-sm" data-del-log="${l.id}" style="float:right">✕</button></div><div class="fit-log-body">${(l.entries || []).map(e => {
     const sets = e.setLog || ((num(e.weight) || e.reps) ? [{ weight: e.weight, reps: e.reps }] : []);
     const txt = sets.map(s => `${num(s.weight) ? s.weight : '–'}×${(s.reps != null && s.reps !== '') ? s.reps : '–'}`).join('  ');
     return `<div class="fit-log-ex"><span class="fit-log-exn">${escapeHtml(e.name.split(' (')[0])}</span> <strong>${sets.length} ser</strong> <span class="muted">${escapeHtml(txt)}</span></div>`;
   }).join('')}</div></div>`).join('') : '<div class="muted text-xs">Todavía no registraste sesiones.</div>';
-  return head + matchSetter + warmup + log + `<div class="card"><div class="card-title">Sesiones recientes</div><div class="fit-logs">${hist}</div></div>` + mobility;
+  return head + matchSetter + warmup + log + weeklyVolumeCard() + `<div class="card"><div class="card-title">Sesiones recientes</div><div class="fit-logs">${hist}</div></div>` + mobility;
 }
 
 // Resumen de un set en texto "60×12  60×11".
 const setsTxt = (sets) => sets.map(s => `${num(s.weight) ? s.weight : '–'}×${(s.reps != null && s.reps !== '') ? s.reps : '–'}`).join('  ');
+
+// ---- Normalización de nombres de ejercicio ----
+// Los nombres derivan con el tiempo ("Jalón al pecho (barra)" vs "Jalón al pecho (agarre ancho)")
+// y eso rompe el matching. Nunca se reescribe lo guardado: esto es SOLO para comparar.
+// normalizeExName: minúsculas, sin acentos, espacios colapsados.
+const normalizeExName = (s) => _norm(s).replace(/\s+/g, ' ').trim();
+// looseExName: además quita el calificador final entre paréntesis — solo como último fallback.
+const looseExName = (s) => normalizeExName(String(s || '').replace(/\s*\([^)]*\)\s*$/, ''));
+// Busca un ejercicio en las entries de una sesión. Estricto = exacto → normalizado.
+// El tier "loose" (sin calificador entre paréntesis) va por separado: tiene que
+// ser un último recurso GLOBAL sobre todo el historial, no por sesión — si no,
+// un "Remo (barra)" de ayer taparía el "Remo (mancuerna)" exacto de la semana pasada.
+function findEntryByName(entries, exName, { loose = false } = {}) {
+  if (!loose) {
+    let e = entries.find(x => x.name === exName);
+    if (e) return e;
+    const nq = normalizeExName(exName);
+    return entries.find(x => normalizeExName(x.name) === nq) || null;
+  }
+  const lq = looseExName(exName);
+  if (!lq) return null;
+  return entries.find(x => looseExName(x.name) === lq) || null;
+}
 
 // Clasifica un ejercicio en un grupo muscular según su nombre. El orden de las reglas importa
 // (ej.: "jalón al pecho" es ESPALDA aunque diga "pecho"; se chequea antes que pecho).
@@ -1096,6 +1130,50 @@ function muscleGroup(name) {
   return 'Otros';
 }
 
+// ---- Volumen semanal por grupo muscular (rango de hipertrofia: 10–20 series/grupo/semana) ----
+const VOL_LO = 10, VOL_HI = 20;
+// Cuenta series por grupo: últimos 7 días (incluye hoy) y los 7 anteriores.
+// Una serie = cada entrada de setLog (o el campo sets como fallback en logs viejos).
+function weeklyVolume() {
+  const now = new Date();
+  const start1 = todayKey(addDays(now, -6)), start2 = todayKey(addDays(now, -13));
+  const cur = {}, prev = {};
+  for (const l of (F().workoutLogs || [])) {
+    if (!l.date || l.date < start2) continue;
+    const bucket = l.date >= start1 ? cur : prev;
+    for (const e of (l.entries || [])) {
+      const n = e.setLog ? e.setLog.length : num(e.sets);
+      if (!n) continue;
+      const g = muscleGroup(normalizeExName(e.name));
+      bucket[g] = (bucket[g] || 0) + n;
+    }
+  }
+  return { cur, prev };
+}
+function weeklyVolumeCard() {
+  const { cur, prev } = weeklyVolume();
+  const groups = MUSCLE_GROUPS.filter(g => (cur[g] || 0) > 0 || (prev[g] || 0) > 0);
+  if (!groups.length) return `<div class="card"><div class="card-title">Volumen semanal por grupo</div><div class="muted text-xs">Sin series en los últimos 14 días. Registrá tus sesiones y acá te muestro cuántas series hiciste por grupo muscular vs el rango de hipertrofia (10–20 por semana).</div></div>`;
+  const stateOf = (n) => n < VOL_LO ? ['bajo', 'var(--orange)'] : n > VOL_HI ? ['alto', 'var(--red)'] : ['ok', 'var(--green)'];
+  const rows = groups.map(g => {
+    const c = cur[g] || 0, p = prev[g] || 0;
+    const [st, color] = stateOf(c);
+    const chip = g === 'Otros' ? '<span class="muted">—</span>' : `<span style="color:${color};font-weight:700">${st}</span>`;
+    const delta = c === p ? '=' : (c > p ? '▲' : '▼');
+    return `<tr><td class="fit-tl">${g}</td><td class="fit-tv">${c} <span class="muted text-xs">series</span></td><td class="muted fit-te">sem. anterior: ${p} ${delta}</td><td class="fit-tk">${chip}</td></tr>`;
+  }).join('');
+  const hints = groups.filter(g => g !== 'Otros').map(g => {
+    const c = cur[g] || 0;
+    if (c > 0 && c < VOL_LO) return `<div class="fit-alert warn">${g}: ${c} serie${c === 1 ? '' : 's'} esta semana — por debajo del rango 10–20. Sumale 1–2 ejercicios o un par de series.</div>`;
+    if (c > VOL_HI) return `<div class="fit-alert info">${g}: ${c} series esta semana — por encima del rango 10–20. Más no siempre es mejor: cuidá la recuperación.</div>`;
+    return '';
+  }).filter(Boolean).join('');
+  return `<div class="card"><div class="card-title">Volumen semanal por grupo <span class="muted text-xs">· últimos 7 días</span></div>
+    <table class="fit-table">${rows}</table>${hints}
+    <div class="muted text-xs" style="margin-top:8px">Zona de hipertrofia: 10–20 series por grupo por semana. Cuento cada serie que registraste, venga del plan o de una sesión libre.</div>
+  </div>`;
+}
+
 // Junta TODOS los ejercicios que hiciste alguna vez, con sus últimas sesiones (peso × reps).
 function exerciseSummaries() {
   const logs = [...(F().workoutLogs || [])].sort((a, b) => a.date < b.date ? 1 : -1); // recientes primero
@@ -1105,8 +1183,10 @@ function exerciseSummaries() {
       const sets = e.setLog || ((num(e.weight) || e.reps) ? [{ weight: e.weight, reps: e.reps }] : []);
       if (!sets.length) continue;
       const top = Math.max(0, ...sets.map(s => num(s.weight)));
-      if (!map.has(e.name)) map.set(e.name, { name: e.name, group: muscleGroup(e.name), sessions: [], best: 0, count: 0 });
-      const o = map.get(e.name);
+      // Clave normalizada: junta variantes de tipeo/acentos del mismo ejercicio. Muestra el nombre más reciente.
+      const key = normalizeExName(e.name);
+      if (!map.has(key)) map.set(key, { name: e.name, group: muscleGroup(normalizeExName(e.name)), sessions: [], best: 0, count: 0 });
+      const o = map.get(key);
       o.sessions.push({ date: l.date, txt: setsTxt(sets), top, nsets: sets.length });
       o.count++;
       if (top > o.best) o.best = top;
@@ -1130,9 +1210,19 @@ function bodyEjercicios() {
     const rows = recent.map((s, i) => `<div class="fit-log-ex"><span class="fit-log-exn" style="min-width:54px">${fmtDay(s.date)}</span> <strong>${s.nsets} ser</strong> <span class="muted">${escapeHtml(s.txt)}</span>${i === 0 ? ' <span class="muted text-xs">· última</span>' : ''}</div>`).join('');
     const more = o.count > recent.length ? `<div class="muted text-xs" style="margin-top:4px">…y ${o.count - recent.length} sesión(es) más</div>` : '';
     const pr = o.best > 0 ? `<span class="fit-ex-pr" style="float:right;color:var(--accent);font-weight:800;font-size:1.05em">🏆 ${o.best} kg</span>` : '';
+    // Progresión: peso máximo (top set) por sesión, en orden cronológico (últimas 10 con peso).
+    let prog = '';
+    const chron = o.sessions.filter(s => s.top > 0).slice(0, 10).reverse();
+    if (chron.length >= 2) {
+      const dec = chron.some(s => s.top % 1) ? 1 : 0;
+      const lastTop = chron[chron.length - 1].top;
+      const vs = lastTop >= o.best ? '— estás en tu mejor marca 💪' : `(a ${+(o.best - lastTop).toFixed(1)} kg de tu mejor)`;
+      prog = `<div style="margin-top:6px">${chartLine(chron.map(s => ({ label: fmtDay(s.date), value: s.top })), { color: 'var(--green)', dec, ariaLabel: `Progresión del peso máximo por sesión en ${o.name}` })}
+        <div class="muted text-xs">Última: ${lastTop} kg · Mejor: ${o.best} kg ${vs}</div></div>`;
+    }
     return `<div class="fit-log" data-exname="${escapeHtml(o.name.toLowerCase())}">
       <div class="fit-log-head"><strong>${escapeHtml(o.name)}</strong>${pr}</div>
-      <div class="fit-log-body">${rows}${more}</div>
+      <div class="fit-log-body">${rows}${more}${prog}</div>
     </div>`;
   };
   // Agrupar por grupo muscular, en el orden definido.
@@ -1266,27 +1356,33 @@ function bodyPerfil() {
 const bar = (val, goal, color) => { const pct = goal ? Math.min(100, Math.round(val / goal * 100)) : 0; return `<div class="fit-bar"><div class="fit-bar-fill" style="width:${pct}%;background:${color}"></div></div>`; };
 const lastWeightFor = (exName) => {
   const logs = [...(F().workoutLogs || [])].sort((a, b) => a.date < b.date ? 1 : -1);
-  for (const l of logs) {
-    const e = (l.entries || []).find(x => x.name === exName);
-    if (!e) continue;
-    const sets = e.setLog || (num(e.weight) ? [{ weight: e.weight }] : []);
-    const w = Math.max(0, ...sets.map(s => num(s.weight)));
-    if (w > 0) return w;
+  // Dos pasadas sobre TODO el historial: estricta primero, loose como último
+  // recurso global (un variante loose reciente no debe tapar un exacto viejo).
+  for (const loose of [false, true]) {
+    for (const l of logs) {
+      const e = findEntryByName(l.entries || [], exName, { loose });
+      if (!e) continue;
+      const sets = e.setLog || (num(e.weight) ? [{ weight: e.weight }] : []);
+      const w = Math.max(0, ...sets.map(s => num(s.weight)));
+      if (w > 0) return w;
+    }
   }
   return null;
 };
 // Última sesión registrada de un ejercicio (para sobrecarga progresiva).
 const lastSessionFor = (exName) => {
   const logs = [...(F().workoutLogs || [])].sort((a, b) => a.date < b.date ? 1 : -1);
-  for (const l of logs) {
-    const e = (l.entries || []).find(x => x.name === exName);
-    if (!e) continue;
-    const sets = e.setLog || ((num(e.weight) || e.reps) ? [{ weight: e.weight, reps: e.reps }] : []);
-    if (!sets.length) continue;
-    const txt = sets.map(s => `${num(s.weight) ? s.weight : '–'}×${(s.reps != null && s.reps !== '') ? s.reps : '–'}`).join('  ');
-    const top = Math.max(0, ...sets.map(s => num(s.weight)));
-    const reps = Math.max(0, ...sets.map(s => num(s.reps)));
-    return { date: l.date, txt, top, reps };
+  for (const loose of [false, true]) {
+    for (const l of logs) {
+      const e = findEntryByName(l.entries || [], exName, { loose });
+      if (!e) continue;
+      const sets = e.setLog || ((num(e.weight) || e.reps) ? [{ weight: e.weight, reps: e.reps }] : []);
+      if (!sets.length) continue;
+      const txt = sets.map(s => `${num(s.weight) ? s.weight : '–'}×${(s.reps != null && s.reps !== '') ? s.reps : '–'}`).join('  ');
+      const top = Math.max(0, ...sets.map(s => num(s.weight)));
+      const reps = Math.max(0, ...sets.map(s => num(s.reps)));
+      return { date: l.date, txt, top, reps };
+    }
   }
   return null;
 };
@@ -1490,7 +1586,8 @@ function wire(root) {
   }
   all('[data-how]').forEach(b => b.addEventListener('click', () => { const key = b.dataset.how; if (expandedEx.has(key)) expandedEx.delete(key); else expandedEx.add(key); renderFitness(root); }));
   // + serie: agrega una fila al DOM sin re-render (preserva lo ya tipeado)
-  all('[data-addset]').forEach(b => b.addEventListener('click', () => {
+  const addSetRow = (ev) => {
+    const b = ev.currentTarget;
     const cont = b.closest('.fit-sets'); if (!cont) return;
     const n = cont.querySelectorAll('.fit-set').length; if (n >= 4) return;
     const div = document.createElement('div');
@@ -1498,9 +1595,31 @@ function wire(root) {
     div.innerHTML = `<span class="fit-set-n">S${n + 1}</span><input type="number" step="0.5" inputmode="decimal" class="input fit-set-in" data-f="w" placeholder="kg"><input type="number" inputmode="numeric" class="input fit-set-in" data-f="r" placeholder="reps">`;
     cont.insertBefore(div, b);
     if (n + 1 >= 4) b.remove();
-  }));
+  };
+  all('[data-addset]').forEach(b => b.addEventListener('click', addSetRow));
+  // Sesión libre: agrega un bloque de series para un ejercicio fuera del plan, sin re-render
+  // (así no se pierde lo que ya tipeaste en los otros ejercicios).
+  $('#fit-free-add')?.addEventListener('click', () => {
+    const inp = $('#fit-free-ex'); const name = (inp?.value || '').trim();
+    if (!name) { toast('Poné el nombre del ejercicio', 'error'); return; }
+    const list = $('#fit-free-list'); if (!list) return;
+    const last = lastWeightFor(name);
+    const wrap = document.createElement('div');
+    wrap.className = 'fit-ex';
+    const title = document.createElement('div');
+    title.className = 'fit-ex-name';
+    title.textContent = name; // textContent: sin riesgo de HTML inyectado
+    const sets = document.createElement('div');
+    sets.className = 'fit-sets';
+    sets.dataset.name = name;
+    sets.innerHTML = Array.from({ length: 3 }, (_, s) => `<div class="fit-set"><span class="fit-set-n">S${s + 1}</span><input type="number" step="0.5" inputmode="decimal" class="input fit-set-in" data-f="w" placeholder="${last != null ? last + 'kg' : 'kg'}"><input type="number" inputmode="numeric" class="input fit-set-in" data-f="r" placeholder="reps"></div>`).join('') + '<button class="fit-addset" data-addset="1">+ serie</button>';
+    sets.querySelector('[data-addset]')?.addEventListener('click', addSetRow);
+    wrap.appendChild(title); wrap.appendChild(sets);
+    list.appendChild(wrap);
+    if (inp) inp.value = '';
+  });
   $('#fit-gym-save')?.addEventListener('click', () => {
-    const plan = F().plan, day = plan.days[gymDayIndex], entries = [];
+    const plan = F().plan || defaultFitnessPlan(), day = plan.days[gymDayIndex] || plan.days[0], entries = [];
     all('.fit-sets').forEach(cont => {
       const name = cont.dataset.name;
       const setLog = [];
@@ -1512,7 +1631,9 @@ function wire(root) {
       if (setLog.length) entries.push({ name, setLog });
     });
     if (!entries.length) return;
-    mutate(s => { s.fitness.workoutLogs = s.fitness.workoutLogs || []; s.fitness.workoutLogs.push({ id: uid(), date: k, dayIndex: gymDayIndex, dayName: day.name, entries }); });
+    // Con nombre libre, la sesión se guarda como libre: dayIndex null + dayName tipeado.
+    const freeName = ($('#fit-free-name')?.value || '').trim();
+    mutate(s => { s.fitness.workoutLogs = s.fitness.workoutLogs || []; s.fitness.workoutLogs.push({ id: uid(), date: k, dayIndex: freeName ? null : gymDayIndex, dayName: freeName || day.name, entries }); });
   });
   all('[data-del-log]').forEach(b => b.addEventListener('click', () => { const id = b.dataset.delLog; mutate(s => { s.fitness.workoutLogs = (s.fitness.workoutLogs || []).filter(l => l.id !== id); }); }));
 

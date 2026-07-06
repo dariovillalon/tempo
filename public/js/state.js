@@ -211,11 +211,20 @@ export const state = {
   mytime: defaultMyTime(),
   bills: [],   // cuentas por pagar: { id, name, amount, frequency, dueDay, payMethod, url, notes, paidMonths:[] }
   promos: [],  // promociones/cupones: { id, name, source, card, benefit, cadence, validUntil, usedDates:[], notes, url }
+  reviews: [], // cierres semanales: { id, weekOf (lunes YYYY-MM-DD), done:[], hoursByProject, answers:{}, statusMarkdown, createdAt }
   vault: null,
   lastUsed: { projectId: null, view: 'today' },
 };
 
 let initialized = false;
+
+// ----- Disponibilidad del vault -----
+// El vault de Obsidian vive en el filesystem del Mac: el server local lo puede
+// leer, el deploy en la nube no. GET /api/config trae `vaultAvailable` y acá
+// se cachea una vez al boot. Default TRUE: si el fetch falla (server viejo,
+// red caída), el modo local sigue funcionando como siempre.
+let vaultAvailable = true;
+export const isVaultAvailable = () => vaultAvailable;
 
 export const subscribe = (fn) => {
   subs.add(fn);
@@ -268,6 +277,7 @@ const buildPayload = () => ({
   mytime: state.mytime,
   bills: state.bills,
   promos: state.promos,
+  reviews: state.reviews,
   lastUsed: state.lastUsed,
 });
 
@@ -374,6 +384,11 @@ document.addEventListener('visibilitychange', () => {
 
 export const initState = async () => {
   if (initialized) return;
+  // Capability check (una sola vez al boot). Falla → default true (local sigue).
+  try {
+    const cfg = await api.getConfig();
+    if (cfg && typeof cfg.vaultAvailable === 'boolean') vaultAvailable = cfg.vaultAvailable;
+  } catch { vaultAvailable = true; }
   try {
     const data = await api.getState();
     Object.assign(state, data);
@@ -406,9 +421,22 @@ export const initState = async () => {
     if (!state.fitness.plan || !Array.isArray(state.fitness.plan.days) || !state.fitness.plan.days.length) {
       state.fitness.plan = defaultFitnessPlan();
     }
-    // Upgrade plan si es anterior a los campos de técnica/video por ejercicio
-    const _ex0 = state.fitness.plan.days?.[0]?.exercises?.[0];
-    if (_ex0 && !_ex0.cue) state.fitness.plan = defaultFitnessPlan();
+    // Upgrade NO destructivo: planes guardados antes de los campos de técnica/
+    // video (cue/yt) conservan los ejercicios que el usuario editó — solo se
+    // completan los campos faltantes que el plan default trae, como ''.
+    // NUNCA se reemplaza el plan entero (eso pisaba ediciones del usuario).
+    {
+      const defaultExKeys = new Set();
+      for (const d of defaultFitnessPlan().days) {
+        for (const ex of d.exercises) for (const k of Object.keys(ex)) defaultExKeys.add(k);
+      }
+      for (const d of (state.fitness.plan.days || [])) {
+        for (const ex of (d?.exercises || [])) {
+          if (!ex || typeof ex !== 'object') continue;
+          for (const k of defaultExKeys) if (ex[k] === undefined) ex[k] = '';
+        }
+      }
+    }
     if (!Array.isArray(state.fitness.workoutLogs)) state.fitness.workoutLogs = [];
     if (!Array.isArray(state.fitness.foodLibrary) || !state.fitness.foodLibrary.length
         || state.fitness.foodLibraryVersion !== FOOD_LIBRARY_VERSION) {
@@ -423,6 +451,8 @@ export const initState = async () => {
     // Cuentas por pagar + promociones
     if (!Array.isArray(state.bills)) state.bills = [];
     if (!Array.isArray(state.promos)) state.promos = [];
+    // Cierres semanales (reviews) — backfill para estados anteriores
+    if (!Array.isArray(state.reviews)) state.reviews = [];
     // Migrate legacy whiteboards: notes[] → items[] with type='sticky'.
     // Keep this idempotent so re-loads after upgrade are safe.
     for (const wb of state.whiteboards) {
@@ -473,6 +503,7 @@ export const reloadState = async () => {
     state.settings ||= {};
     state.fitness ||= {}; state.fitness.days ||= {};
     state.mytime ||= {}; state.mytime.days ||= {};
+    if (!Array.isArray(state.reviews)) state.reviews = [];
     notify('change');
     return true;
   } catch (e) { console.warn('reloadState failed', e); return false; }
@@ -542,6 +573,7 @@ const folderDepth = (folder, root) => {
 };
 export const runObsidianAutoImport = async ({ silent = true } = {}) => {
   const s = state.settings || {};
+  if (!isVaultAvailable()) return { ok: false, reason: 'no-vault' };
   if (!state.vault?.path) return { ok: false, reason: 'no-vault' };
   const root = (s.autoImportRoot || 'Projects').replace(/^\/+|\/+$/g, '');
   const maxDepth = s.autoImportDepth ?? 1;
@@ -586,7 +618,7 @@ export const removeAllTasks = ({ alsoVault = true } = {}) => {
     s.tasks = [];
     addActivity({ type: 'task.wipe', text: `Eliminó todas las tareas (${removed})` });
   });
-  if (alsoVault && state.vault?.path) {
+  if (alsoVault && state.vault?.path && isVaultAvailable()) {
     // Push empty arrays to each linked project — server deletes orphan files
     for (const l of linked) {
       // Si falla, quedan archivos huérfanos en el vault que resucitan en el próximo import
@@ -601,6 +633,7 @@ export const removeAllTasks = ({ alsoVault = true } = {}) => {
 // edits/deletes done directly in Obsidian land in Tempo. Pomodoro counts stick
 // because the file frontmatter carries the task id.
 export const refreshTasksFromVault = async () => {
+  if (!isVaultAvailable()) return { ok: false, reason: 'no-vault' };
   if (!state.vault?.path) return { ok: false, reason: 'no-vault' };
   const linked = state.projects.filter(p => p.vaultFolder);
   if (!linked.length) return { ok: true, projects: 0, added: 0, removed: 0, updated: 0 };
@@ -812,6 +845,9 @@ const vaultSyncTimers = new Map();
 // Varias carpetas pueden fallar en ráfaga tras una edición: un solo toast cada 10s.
 let lastVaultSyncToast = 0;
 const scheduleVaultSync = (projectId) => {
+  // Sin vault disponible (deploy en la nube): skip silencioso — nada de toasts
+  // de error en cada mutación de tareas.
+  if (!isVaultAvailable()) return;
   if (!projectId || !state.vault?.path) return;
   const p = findProject(projectId);
   if (!p?.vaultFolder) return;

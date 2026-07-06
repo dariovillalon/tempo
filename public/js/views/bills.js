@@ -66,6 +66,29 @@ const isPaid = (b) => {
   return paidKeysFor(b).some(k => paid.includes(k));
 };
 
+// Vencimientos del período: para cada cuenta IMPAGA con día de vencimiento,
+// cuántos días faltan para que venza este período. `days` >= 0: vence en N días
+// (0 = hoy); `days` < 0: el vencimiento de este período ya pasó y sigue impaga
+// (vencida). El rollover al mes siguiente solo aplica a cuentas ya pagadas
+// (que acá se excluyen): una impaga con el día pasado se reporta vencida, no
+// "vence el mes que viene". dueDay se recorta al último día del mes actual
+// (ej: "vence 31" en junio → 30). Ordenado de más urgente a menos.
+export const dueInfo = (bills = state.bills) => {
+  const now = new Date();
+  const today = now.getDate();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  return (bills || [])
+    // Solo mensuales: dueDay como "día del mes actual" no está definido para
+    // anual/bimestral/puntual (avisarían "vencida" 11 meses al año).
+    .filter(b => b && (b.frequency || 'mensual') === 'mensual' && parseInt(b.dueDay, 10) >= 1 && !isPaid(b))
+    .map(b => {
+      const due = Math.min(daysInMonth, parseInt(b.dueDay, 10));
+      const days = due - today;
+      return { bill: b, name: b.name || '', dueDay: due, days, overdue: days < 0 };
+    })
+    .sort((a, b) => a.days - b.days);
+};
+
 const addBill = (data) => mutate(s => { s.bills.push({ id: uid(), name: data.name || '', amount: data.amount || '', frequency: data.frequency || 'mensual', dueDay: data.dueDay || '', payMethod: data.payMethod || '', url: data.url || '', notes: '', paidMonths: [] }); });
 const patchBill = (id, patch) => mutate(s => { const b = s.bills.find(x => x.id === id); if (b) Object.assign(b, patch); });
 const delBill = (id) => mutate(s => { s.bills = s.bills.filter(x => x.id !== id); });

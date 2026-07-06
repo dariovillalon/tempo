@@ -1,7 +1,7 @@
 // statusReport.js — generate a markdown status report for a project for the
 // last 7/14/30 days. Outputs ready-to-paste content for Slack/email/vault.
 
-import { state, findProject } from '../state.js';
+import { state, findProject, isVaultAvailable } from '../state.js';
 import { api } from '../api.js';
 import { openModal, closeModal } from './modal.js';
 import { toast } from './toast.js';
@@ -128,6 +128,10 @@ const generate = (project, days) => {
   return L.join('\n');
 };
 
+// Reusable: el cierre semanal (reviewModal.js) genera el status markdown por
+// proyecto raíz con esta misma función.
+export const generateStatusMarkdown = (project, days = 7) => generate(project, days);
+
 const renderBody = () => {
   const body = document.getElementById('review-modal-body');
   document.getElementById('review-modal-title').textContent = `Status report · ${currentProject.name}`;
@@ -143,7 +147,7 @@ const renderBody = () => {
         <button class="board-filter ${currentPeriod === 30 ? 'active' : ''}" data-d="30">30 días</button>
       </div>
       <button class="btn btn-secondary btn-sm" id="sr-copy" style="margin-left:auto">📋 Copiar</button>
-      ${state.vault?.path && currentProject.vaultFolder ? '<button class="btn btn-secondary btn-sm" id="sr-save">💾 Guardar a vault</button>' : ''}
+      ${isVaultAvailable() && state.vault?.path && currentProject.vaultFolder ? '<button class="btn btn-secondary btn-sm" id="sr-save">💾 Guardar a vault</button>' : ''}
     </div>
     <textarea class="textarea mono" id="sr-text" style="min-height:380px;font-size:12px;line-height:1.45">${escapeHtml(md)}</textarea>
   `;

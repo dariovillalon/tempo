@@ -8,6 +8,8 @@ import { openTaskModal } from '../components/taskModal.js';
 import { openBlockModal } from '../components/blockModal.js';
 import { openReviewModal } from '../components/reviewModal.js';
 import { fitnessTodaySnapshot } from './fitness.js';
+import { promosForDay } from './promos.js';
+import { dueInfo } from './bills.js';
 
 // Tips de "La psicología del dinero" (Morgan Housel), uno por capítulo. Rota por día.
 const MONEY_TIPS = [
@@ -70,7 +72,82 @@ const buildNextUp = (tk) => {
   const tip = dailyMoneyTip();
   const inner = rows.join('') + chips + alertsHtml + breakRow + rec + prompt;
   return `<div class="card nextup-card"><div class="card-title">Lo que sigue</div>${inner || '<div class="muted text-xs">Nada pendiente ahora mismo. 👌</div>'}</div>
+    ${buildHoyTambien()}
     <div class="card moneytip-card"><div class="nx-row"><span class="nx-ico">💰</span><div><b>Psicología del dinero · cap. ${tip.n}:</b> ${escapeHtml(tip.text)}</div></div></div>`;
+};
+
+// --- Card "Hoy también": promos que aplican hoy, cuentas por vencer y BTC.
+// El bloque BTC se completa async después del render (nunca bloquea la vista):
+// si el fetch falla queda oculto y solo se loguea un warn.
+const DUE_SOON_DAYS = 5;
+
+const buildHoyTambien = () => {
+  const promosHoy = promosForDay(state.promos || [], new Date().getDay());
+  const cuentas = dueInfo(state.bills || []).filter(i => i.days <= DUE_SOON_DAYS);
+
+  const promoSec = promosHoy.length ? `
+    <div class="nx-row"><span class="nx-ico">🎟️</span><div><b>Promos de hoy:</b>
+      <div class="nx-chips" style="margin:6px 0 0">
+        ${promosHoy.map(p => `<span class="nx-chip">${escapeHtml([p.name, p.benefit].filter(Boolean).join(' · ') || '(sin nombre)')}</span>`).join('')}
+      </div>
+    </div></div>` : '';
+
+  const cuentasSec = cuentas.map(i => {
+    const nm = `<b>${escapeHtml(i.name || '(sin nombre)')}</b>`;
+    if (i.overdue) {
+      const hace = -i.days;
+      return `<div class="nx-row"><span class="nx-ico">⚠️</span><div>${nm} <span style="color:var(--red)">vencida ${hace === 1 ? 'ayer' : `hace ${hace} días`}</span></div></div>`;
+    }
+    const when = i.days === 0 ? 'vence hoy' : i.days === 1 ? 'vence mañana' : `vence en ${i.days} días`;
+    return `<div class="nx-row"><span class="nx-ico">💡</span><div>${nm} ${when}</div></div>`;
+  }).join('');
+
+  // Fila BTC oculta hasta que el fetch async traiga precio (ver loadHoyBtc).
+  const btcSec = `<div class="nx-row" id="hoy-btc-row" style="display:none"><span class="nx-ico">₿</span><div id="hoy-btc"></div></div>`;
+
+  const hasContent = promosHoy.length > 0 || cuentas.length > 0;
+  // Sin promos ni cuentas, la card entera queda oculta (nada de chrome muerto);
+  // se muestra sola si después llega el precio de BTC.
+  return `<div class="card" id="hoy-tambien" style="margin-top:14px${hasContent ? '' : ';display:none'}">
+    <div class="card-title">Hoy también</div>
+    ${promoSec}${cuentasSec}${btcSec}
+  </div>`;
+};
+
+const fmtBtcK = (n) => (n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(Math.round(n)));
+
+let btcTodayCache = { text: '', fetchedAt: 0 };
+const HOY_BTC_TTL_MS = 60 * 1000;
+
+const loadHoyBtc = async (root) => {
+  if (!btcTodayCache.text || (Date.now() - btcTodayCache.fetchedAt) > HOY_BTC_TTL_MS) {
+    const [pRes, aRes] = await Promise.allSettled([api.getBtcPrice(), api.listBtcAlerts()]);
+    const snap = (pRes.status === 'fulfilled' && pRes.value?.snapshot)
+      || (aRes.status === 'fulfilled' && aRes.value?.snapshot) || null;
+    const price = Number(snap?.price);
+    if (!isFinite(price) || price <= 0) {
+      const err = pRes.status === 'rejected' ? pRes.reason : (aRes.status === 'rejected' ? aRes.reason : '(sin snapshot)');
+      console.warn('[hoy] precio BTC no disponible', err);
+      return;
+    }
+    let text = fmtBtcK(price);
+    const activas = aRes.status === 'fulfilled'
+      ? (aRes.value?.alerts || []).filter(a => a && a.active && isFinite(Number(a.target)) && Number(a.target) > 0)
+      : [];
+    if (activas.length) {
+      const near = activas.reduce((best, a) =>
+        Math.abs(Number(a.target) - price) < Math.abs(Number(best.target) - price) ? a : best);
+      const pct = ((Number(near.target) - price) / price) * 100;
+      text += ` · alerta a ${fmtBtcK(Number(near.target))} (${pct >= 0 ? '+' : ''}${Math.round(pct)}%)`;
+    }
+    btcTodayCache = { text, fetchedAt: Date.now() };
+  }
+  // El usuario puede haber navegado mientras tanto: si los nodos ya no están, no pasa nada.
+  const span = root.querySelector('#hoy-btc');
+  if (!span || !btcTodayCache.text) return;
+  span.textContent = btcTodayCache.text;
+  const row = root.querySelector('#hoy-btc-row'); if (row) row.style.display = '';
+  const card = root.querySelector('#hoy-tambien'); if (card) card.style.display = '';
 };
 
 // Cache today's calendar events briefly so URL changes / vault edits are seen quickly.
@@ -148,7 +225,7 @@ export const renderToday = (root) => {
       <div>
         <div class="row" style="justify-content:space-between;align-items:flex-start;margin-bottom:6px;flex-wrap:wrap">
           <h1 class="today-greeting" style="margin:0">${greeting()}, <span class="accent">${escapeHtml(state.settings?.userName || 'Dario')}</span>.</h1>
-          <button class="btn btn-secondary btn-sm" id="close-day-btn" title="Cerrar el día — escribe entry en DailyNotes/">📝 Cerrar día</button>
+          <button class="btn btn-secondary btn-sm" id="close-day-btn" title="Cerrar la semana — repaso semanal (guarda en Tempo y, si hay vault, también ahí)">📝 Cerrar semana</button>
         </div>
         <div class="today-date">${fmtDate(today, { weekday: true, year: true })}</div>
 
@@ -281,6 +358,9 @@ export const renderToday = (root) => {
   // Refresh meetings async; reuse cache if same day
   loadTodayMeetings(root);
 
+  // BTC de "Hoy también": async, fire-and-forget — jamás bloquea el render.
+  loadHoyBtc(root);
+
   root.querySelectorAll('.project-pill[data-pid]').forEach(node => {
     node.addEventListener('click', () => router.go(`project/${node.dataset.pid}`));
   });
@@ -289,7 +369,7 @@ export const renderToday = (root) => {
   root.querySelector('#add-block-today').addEventListener('click', () => openBlockModal({ date: tk }));
   root.querySelector('#add-task-today').addEventListener('click', () => openTaskModal({ state: 'doing' }));
   const closeDay = root.querySelector('#close-day-btn');
-  if (closeDay) closeDay.addEventListener('click', () => openReviewModal('day'));
+  if (closeDay) closeDay.addEventListener('click', () => openReviewModal('week'));
 };
 
 const fmtHHMM = (date) => `${pad(date.getHours())}:${pad(date.getMinutes())}`;

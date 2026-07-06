@@ -1,6 +1,6 @@
 // notes.js — Obsidian vault explorer with inline markdown editor (autosave)
 
-import { state } from '../state.js';
+import { state, isVaultAvailable } from '../state.js';
 import { api } from '../api.js';
 import { escapeHtml, debounce } from '../utils.js';
 import { openVaultModal } from '../components/vaultModal.js';
@@ -53,6 +53,7 @@ export const renderNotes = (root, pendingArg) => {
     for (const p of parts) { acc = acc ? acc + '/' + p : p; openFolders.add(acc); }
   }
   paint(root);
+  if (!isVaultAvailable()) return; // sin vault acá: paint ya mostró la nota amigable
   if (state.vault?.path && !vaultTree) loadVault().then(() => paint(root));
   if (pending) {
     api.getVaultFile(pending)
@@ -71,6 +72,18 @@ export const resetNotesCache = () => {
 };
 
 const paint = (root) => {
+  if (!isVaultAvailable()) {
+    root.innerHTML = `
+      <div class="empty" style="padding:60px 20px;max-width:520px;margin:60px auto">
+        <div class="empty-title">El vault vive en tu Mac</div>
+        <div style="margin:10px 0;line-height:1.6">
+          Las notas de Obsidian se leen del disco de tu Mac — conectate desde ahí
+          para verlas y editarlas. El resto de Tempo funciona normal desde acá.
+        </div>
+      </div>
+    `;
+    return;
+  }
   if (!state.vault?.path) {
     root.innerHTML = `
       <div class="empty" style="padding:60px 20px;max-width:520px;margin:60px auto">

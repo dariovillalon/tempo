@@ -9,8 +9,75 @@ const monthNow = () => todayKey().slice(0, 7); // mes local, no UTC
 const usedThisMonth = (p) => (p.usedDates || []).some(d => (d || '').startsWith(monthNow()));
 const isExpired = (p) => p.validUntil && p.validUntil < todayKey();
 
-const addPromo = (data) => mutate(s => { s.promos.push({ id: uid(), name: data.name || '', source: data.source || '', card: data.card || '', benefit: data.benefit || '', cadence: data.cadence || '', validUntil: data.validUntil || '', usedDates: [], notes: '', url: '' }); });
-const patchPromo = (id, patch) => mutate(s => { const p = s.promos.find(x => x.id === id); if (p) Object.assign(p, patch); });
+// Días de la semana estructurados (números JS: 0=domingo … 6=sábado).
+// `days` es la fuente de verdad; `cadence` queda como etiqueta humana libre.
+const DAY_SHORT = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
+const DAY_FULL = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+
+// Parser legacy: deriva días desde el texto libre de cadencia ('Lun · Mié · Vie',
+// 'Martes y viernes', 'Sábados', 'todos los días'…). Devuelve null si no se
+// reconoce ningún día (cadencias tipo '1/mes' → null = "se muestra siempre").
+export const parseCadenceDays = (text) => {
+  if (!text || !String(text).trim()) return null;
+  const norm = String(text).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (/\b(todos|todas|diario|diaria|siempre)\b/.test(norm)) return [0, 1, 2, 3, 4, 5, 6];
+  const TOKENS = {
+    dom: 0, domingo: 0, domingos: 0,
+    lun: 1, lunes: 1,
+    mar: 2, martes: 2,
+    mie: 3, miercoles: 3,
+    jue: 4, jueves: 4,
+    vie: 5, viernes: 5,
+    sab: 6, sabado: 6, sabados: 6,
+  };
+  const days = new Set();
+  // Rangos primero ("Lun–Jue", "lunes a viernes", "Vie-Dom"): expandir el tramo
+  // completo, con wrap pasando el domingo (Vie–Dom → 5,6,0).
+  const DAY_RE = '(dom(?:ingos?)?|lun(?:es)?|mar(?:tes)?|mie(?:rcoles)?|jue(?:ves)?|vie(?:rnes)?|sab(?:ados?)?)';
+  const rangeRe = new RegExp(`\\b${DAY_RE}\\s*(?:[\\u2013\\u2014-]|a|al|hasta)\\s*${DAY_RE}\\b`, 'g');
+  let rest = norm;
+  for (const m of norm.matchAll(rangeRe)) {
+    const from = TOKENS[m[1]], to = TOKENS[m[2]];
+    if (from === undefined || to === undefined) continue;
+    for (let d = from; ; d = (d + 1) % 7) { days.add(d); if (d === to) break; }
+    rest = rest.replace(m[0], ' ');
+  }
+  // Días sueltos. hasOwn: `in` matchearía claves del prototipo ("constructor").
+  for (const tok of rest.split(/[^a-z]+/)) if (Object.hasOwn(TOKENS, tok)) days.add(TOKENS[tok]);
+  return days.size ? [...days].sort((a, b) => a - b) : null;
+};
+
+// Días efectivos de una promo: `days` explícito si existe; si no, se derivan
+// de la cadencia. null = sin info parseable (tratar como "siempre").
+const effectiveDays = (p) => (Array.isArray(p.days) ? p.days : parseCadenceDays(p.cadence || ''));
+
+// Promos activas que aplican a un día de semana (0=domingo … 6=sábado).
+// - days: [] explícito → no se muestra nunca.
+// - days undefined Y cadencia no parseable → se muestra siempre (que nada desaparezca solo).
+// - Respeta validUntil cuando está seteado.
+export const promosForDay = (promos, weekday) => (promos || []).filter(p => {
+  if (!p || isExpired(p)) return false;
+  const days = effectiveDays(p);
+  if (days == null) return true;
+  return days.includes(weekday);
+});
+
+const addPromo = (data) => mutate(s => {
+  const p = { id: uid(), name: data.name || '', source: data.source || '', card: data.card || '', benefit: data.benefit || '', cadence: data.cadence || '', validUntil: data.validUntil || '', usedDates: [], notes: '', url: '' };
+  if (Array.isArray(data.days)) p.days = data.days.slice();
+  s.promos.push(p);
+});
+const patchPromo = (id, patch) => mutate(s => {
+  const p = s.promos.find(x => x.id === id); if (!p) return;
+  Object.assign(p, patch);
+  // Backfill perezoso: si todavía no tiene days, derivarlos de la cadencia y persistirlos.
+  if (!Array.isArray(p.days)) { const d = parseCadenceDays(p.cadence || ''); if (d) p.days = d; }
+});
+const togglePromoDay = (id, day) => mutate(s => {
+  const p = s.promos.find(x => x.id === id); if (!p) return;
+  const base = Array.isArray(p.days) ? p.days.slice() : (parseCadenceDays(p.cadence || '') || []);
+  p.days = base.includes(day) ? base.filter(x => x !== day) : [...base, day].sort((a, b) => a - b);
+});
 const delPromo = (id) => mutate(s => { s.promos = s.promos.filter(x => x.id !== id); });
 const useToday = (id) => mutate(s => { const p = s.promos.find(x => x.id === id); if (!p) return; p.usedDates = p.usedDates || []; p.usedDates.push(todayKey()); });
 const undoUse = (id) => mutate(s => { const p = s.promos.find(x => x.id === id); if (!p || !(p.usedDates || []).length) return; p.usedDates.pop(); });
@@ -55,6 +122,13 @@ export const renderPromos = (root) => {
         <label class="muted text-xs promo-valid">Válida hasta <input type="date" class="input" data-pid="${p.id}" data-f="validUntil" value="${escapeHtml(p.validUntil || '')}"></label>
         <input type="text" class="input" data-pid="${p.id}" data-f="cadence" value="${escapeHtml(p.cadence || '')}" placeholder="Frecuencia (1/mes…)">
       </div>
+      ${(() => {
+        const eff = effectiveDays(p) || [];
+        return `<div class="promo-days" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin:2px 0" title="Días en que aplica la promo (sin días marcados y sin cadencia reconocible = se muestra siempre)">
+          <span class="muted text-xs" style="margin-right:2px">Días</span>
+          ${DAY_SHORT.map((lbl, d) => `<button class="fit-day-tab ${eff.includes(d) ? 'active' : ''}" data-pday="${d}" data-pdayof="${p.id}" title="${DAY_FULL[d]}">${lbl}</button>`).join('')}
+        </div>`;
+      })()}
       ${last ? `<div class="muted text-xs">Último uso: ${escapeHtml(last)}${used ? ` · <a data-pundo="${p.id}" class="promo-undo">deshacer</a>` : ''}</div>` : ''}
       ${exp ? `<div class="muted text-xs" style="color:var(--red)">Venció el ${escapeHtml(p.validUntil)}</div>` : ''}
       <textarea class="textarea" data-pid="${p.id}" data-f="notes" rows="1" placeholder="Notas (condiciones, tope de reintegro…)">${escapeHtml(p.notes || '')}</textarea>
@@ -84,6 +158,7 @@ export const renderPromos = (root) => {
   all('[data-ptoggle]').forEach(b => b.addEventListener('click', () => { const id = b.dataset.ptoggle; if (expandedPromos.has(id)) expandedPromos.delete(id); else expandedPromos.add(id); renderPromos(root); }));
   all('[data-pgo]').forEach(b => b.addEventListener('click', () => { const p = state.promos.find(x => x.id === b.dataset.pgo); if (p && usedThisMonth(p)) undoUse(b.dataset.pgo); else useToday(b.dataset.pgo); }));
   all('[data-pundo]').forEach(a => a.addEventListener('click', () => undoUse(a.dataset.pundo)));
+  all('[data-pday]').forEach(b => b.addEventListener('click', () => togglePromoDay(b.dataset.pdayof, +b.dataset.pday)));
   all('[data-pdelete]').forEach(b => b.addEventListener('click', () => delPromo(b.dataset.pdelete)));
   all('[data-pid][data-f]').forEach(el => el.addEventListener('change', () => patchPromo(el.dataset.pid, { [el.dataset.f]: el.value })));
 };

@@ -74,6 +74,14 @@ async function kvSet(key, data) {
   await p.query('INSERT INTO kv (key, data) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data', [key, JSON.stringify(data)]);
   return true;
 }
+// Insert-if-absent: para seeds. Devuelve la fila ganadora (la nuestra o la que
+// otro escritor concurrente metió primero) — un upsert acá pisaría datos.
+async function kvSeed(key, data) {
+  const p = await pgPool(); if (!p) return data;
+  const r = await p.query('INSERT INTO kv (key, data) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING', [key, JSON.stringify(data)]);
+  if (r.rowCount === 1) return data;
+  return (await kvGet(key)) ?? data;
+}
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const DATA_DIR = path.join(__dirname, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
@@ -1282,7 +1290,9 @@ function expandPath(input) {
 // ============================================================
 // BTC price alerts
 // ------------------------------------------------------------
-// Persistencia en data/btc-alerts.json. Cada alerta tiene:
+// Persistencia: data/btc-alerts.json en local; fila kv 'btc-alerts' en modo
+// nube (DATABASE_URL) — el filesystem de Render es efímero y las alertas
+// morían en cada deploy. Cada alerta tiene:
 //   { id, target, direction:'below'|'above', email, active, cooldownHours,
 //     createdAt, updatedAt, lastTriggeredAt, lastTriggerPrice, triggerCount, note }
 // El scheduler corre cada CHECK_INTERVAL_MS y consulta CoinGecko.
@@ -1299,17 +1309,39 @@ let smtpFailCount = 0;      // fallos SMTP consecutivos
 let smtpBackoffUntil = 0;   // no reintentar envíos antes de este timestamp
 const SMTP_BACKOFF_MAX_MS = 6 * 3600 * 1000; // tope del backoff exponencial: 6 h
 
-async function readBtcAlerts() {
+const BTC_LOG_MAX = 200; // tope del log persistido (newest-first) para que la fila kv no crezca sin límite
+
+function normalizeBtcAlerts(data) {
+  if (!data || !Array.isArray(data.alerts)) return { alerts: [], log: [] };
+  return { alerts: data.alerts, log: Array.isArray(data.log) ? data.log : [] };
+}
+
+async function readBtcAlertsFile() {
   try {
-    const raw = await fs.readFile(BTC_ALERTS_FILE, 'utf-8');
-    const data = JSON.parse(raw);
-    return Array.isArray(data.alerts) ? data : { alerts: [], log: [] };
+    return normalizeBtcAlerts(JSON.parse(await fs.readFile(BTC_ALERTS_FILE, 'utf-8')));
   } catch {
     return { alerts: [], log: [] };
   }
 }
 
+async function readBtcAlerts() {
+  if (DATABASE_URL) {
+    const row = await kvGet('btc-alerts');
+    if (row !== undefined) return normalizeBtcAlerts(row);
+    // Seed único: la fila kv todavía no existe. Si el deploy trae un
+    // data/btc-alerts.json con datos (bundle viejo), migrarlo; si no, arrancar
+    // vacío. kvSeed es insert-if-absent: si otro request/scheduler seedeó (o
+    // escribió una alerta) mientras leíamos el archivo, gana esa fila.
+    const seed = await readBtcAlertsFile();
+    return normalizeBtcAlerts(await kvSeed('btc-alerts', seed));
+  }
+  return readBtcAlertsFile();
+}
+
 async function writeBtcAlerts(data) {
+  // Cap del log (newest-first por unshift): conservar solo los más recientes.
+  if (Array.isArray(data.log) && data.log.length > BTC_LOG_MAX) data.log.length = BTC_LOG_MAX;
+  if (DATABASE_URL) { await kvSet('btc-alerts', data); return; }
   const tmp = BTC_ALERTS_FILE + '.tmp';
   await fs.writeFile(tmp, JSON.stringify(data, null, 2));
   await fs.rename(tmp, BTC_ALERTS_FILE);
@@ -1634,7 +1666,14 @@ async function handleApi(req, res, parsedUrl) {
 
   // ---- Config ----
   if (pathname === '/api/config' && req.method === 'GET') {
-    return sendJSON(res, 200, await getConfig());
+    const config = await getConfig();
+    // vaultAvailable: el vault vive en el filesystem del Mac; en Render el
+    // path apunta a una carpeta que no existe → false, y el frontend puede
+    // esconder/degradar las features del vault en la nube.
+    // Sin vault configurado = capaz de conectar uno (no bloquear el alta);
+    // configurado pero inexistente = Render mirando una ruta del Mac → false.
+    const vaultAvailable = !config.vaultPath || existsSync(config.vaultPath);
+    return sendJSON(res, 200, { ...config, vaultAvailable });
   }
 
   // ---- Vault ----

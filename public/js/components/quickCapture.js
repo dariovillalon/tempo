@@ -1,6 +1,6 @@
 // quickCapture.js — Cmd+K command palette + search
 
-import { state, addTask, findProject } from '../state.js';
+import { state, addTask, findProject, isVaultAvailable } from '../state.js';
 import { api } from '../api.js';
 import { toast } from './toast.js';
 import { router } from '../router.js';
@@ -209,7 +209,9 @@ const render = () => {
 const runVaultSearch = debounce(async () => {
   const q = (input?.value || '').trim().toLowerCase();
   if (!q || q.startsWith('/') || q.length < 2) { searchHits = []; searchQuery = ''; render(); return; }
-  if (!state.vault?.path) return;
+  // Vault en el Mac y estamos en la nube: skip silencioso — sin esto, cada
+  // tecleo disparaba una búsqueda que fallaba y llovían toasts de error.
+  if (!state.vault?.path || !isVaultAvailable()) return;
   if (searchAbort) { try { searchAbort.abort(); } catch {} }
   searchAbort = new AbortController();
   try {

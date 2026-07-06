@@ -6,6 +6,7 @@ import { state, findProject, updateTask } from '../state.js';
 import { api } from '../api.js';
 import {
   todayKey, addDays, dayName, minsBetween, minsToHrs, relTime, escapeHtml, pad, pomodoroStreak,
+  startOfWeek,
 } from '../utils.js';
 import { router } from '../router.js';
 import { openProjectModal } from '../components/projectModal.js';
@@ -115,12 +116,19 @@ export const renderDashboard = (root) => {
   if (stuckDoing)         attention.push({ kind: 'stuck',    count: stuckDoing,         label: `${stuckDoing} en doing sin movimiento (3d+)`, action: () => router.go('board') });
   if (stalePCount)        attention.push({ kind: 'stale',    count: stalePCount,        label: `${stalePCount} proyecto(s) sin actividad ${STALE_DAYS}d+` });
 
+  // ---- Weekly review status (¿ya se cerró esta semana?) ----
+  // Misma ancla que reviewModal: un lunes, "la semana" es la que acaba de terminar.
+  const reviewAnchor = today.getDay() === 1 ? addDays(today, -1) : today;
+  const currentWeekOf = todayKey(startOfWeek(reviewAnchor));
+  const weekClosed = (state.reviews || []).some(r => r.weekOf === currentWeekOf);
+
   // ---- Render ----
   root.innerHTML = `
     <div class="view-h">
       <h2>Dashboard</h2>
       <div class="view-h-actions">
-        <button class="btn btn-ghost" id="dash-weekly-review" title="Cerrar la semana — escribe entry en DailyNotes/">📝 Cerrar semana</button>
+        <button class="btn btn-ghost" id="dash-weekly-review" title="Cerrar la semana — guarda la review en Tempo">📝 Cerrar semana</button>
+        ${weekClosed ? '<span class="muted text-xs" style="align-self:center;white-space:nowrap;color:var(--green)">✓ semana cerrada</span>' : ''}
         <button class="btn btn-ghost" id="dash-import-projects" title="Importar carpetas de Obsidian como proyectos">↓ Importar</button>
         <button class="btn btn-secondary" id="dash-add-project">+ Nuevo proyecto</button>
       </div>

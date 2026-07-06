@@ -3,7 +3,7 @@
 import {
   state, updateSettings, updatePomodoroSettings, setVault, syncServerRev,
   runObsidianAutoImport, removeAllVaultLinkedProjects, removeAllTasks,
-  getAssignees, addAssignee, updateAssignee, removeAssignee,
+  getAssignees, addAssignee, updateAssignee, removeAssignee, isVaultAvailable,
 } from '../state.js';
 import { api } from '../api.js';
 import { toast } from '../components/toast.js';
@@ -117,7 +117,13 @@ export const renderSettings = (root) => {
 
       <div class="card">
         <div class="card-header"><div class="card-title">Obsidian</div></div>
-        ${v?.path
+        ${!isVaultAvailable()
+          ? `<div class="muted text-sm" style="line-height:1.6">
+              El vault vive en tu Mac — conectate desde ahí para sincronizar
+              proyectos y notas con Obsidian. Desde acá el resto de Tempo
+              funciona normal.
+             </div>`
+          : v?.path
           ? `<div class="text-sm" style="margin-bottom:10px">
               <strong>Conectado:</strong>
               <div class="muted mono text-xs" style="word-break:break-all;margin-top:3px">${escapeHtml(v.path)}</div>

@@ -1,7 +1,7 @@
 // app.js — bootstrap: load state, wire chrome, mount router
 
 import { api } from './api.js';
-import { state, initState, subscribe, getSaveStatus, runObsidianAutoImport, refreshTasksFromVault, reloadState } from './state.js';
+import { state, initState, subscribe, getSaveStatus, runObsidianAutoImport, refreshTasksFromVault, reloadState, isVaultAvailable } from './state.js';
 import { router } from './router.js';
 import { todayKey, fmtDate, escapeHtml } from './utils.js';
 import { initModals } from './components/modal.js';
@@ -29,6 +29,7 @@ const wireSidebar = () => {
   // Topbar refresh: re-read tasks/ folder from each linked project (vault wins).
   const refreshBtn = document.getElementById('vault-refresh-btn');
   if (refreshBtn) refreshBtn.addEventListener('click', async () => {
+    if (!isVaultAvailable()) return; // botón oculto en la nube; doble seguro
     if (!state.vault?.path) { toast('Sin vault conectado', 'info'); return; }
     refreshBtn.classList.add('spinning');
     try {
@@ -104,6 +105,15 @@ const main = async () => {
   // Apply persisted theme
   applyTheme(state.settings?.theme || 'dark');
 
+  // Sin vault disponible (deploy en la nube): esconder el refresh del topbar y
+  // el botón Notas del nav. El markup queda — solo se oculta vía JS.
+  if (!isVaultAvailable()) {
+    const rb = document.getElementById('vault-refresh-btn');
+    if (rb) rb.style.display = 'none';
+    const notesBtn = document.querySelector('.nav-btn[data-route="notes"]');
+    if (notesBtn) notesBtn.style.display = 'none';
+  }
+
   // Initial chrome
   updateChrome();
 
@@ -139,7 +149,7 @@ const main = async () => {
 
   // Auto-import Obsidian projects (silent, idempotent) every time the app boots.
   // Picks up new folders in <vault>/<root>/ down to settings.autoImportDepth.
-  if (state.vault?.path && state.settings?.autoImportObsidian !== false) {
+  if (isVaultAvailable() && state.vault?.path && state.settings?.autoImportObsidian !== false) {
     runObsidianAutoImport({ silent: true }).then(res => {
       if (res?.ok && res.projects > 0) {
         toast(`Importé ${res.projects} proyecto(s) nuevo(s) de Obsidian`, 'success');
