@@ -1324,8 +1324,8 @@ function bodyPlan() {
     <div class="muted text-xs" style="margin-top:8px">Cantidades aproximadas para 1 persona en fase de volumen. Ajustá según lo que ya tengas.</div></div>`;
   return plan + swaps + shop;
 }
-const TABS = [['resumen', 'Resumen'], ['dieta', 'Dieta'], ['plan', 'Plan'], ['comidas', 'Comidas'], ['bienestar', 'Bienestar'], ['cuerpo', 'Cuerpo'], ['peso', 'Peso'], ['gym', 'Gym'], ['ejercicios', 'Ejercicios'], ['reportes', 'Reportes'], ['perfil', 'Perfil']];
-const bodyFor = (id) => ({ resumen: bodyResumen, dieta: bodyDieta, plan: bodyPlan, bienestar: bodyBienestar, cuerpo: bodyCuerpo, comidas: bodyComidas, peso: bodyPeso, gym: bodyGym, ejercicios: bodyEjercicios, reportes: bodyReportes, perfil: bodyPerfil }[id] || bodyResumen)();
+const TABS = [['resumen', 'Resumen'], ['dieta', 'Dieta'], ['plan', 'Plan'], ['comidas', 'Comidas'], ['bienestar', 'Bienestar'], ['cuerpo', 'Cuerpo'], ['peso', 'Peso'], ['gym', 'Gym'], ['ejercicios', 'Ejercicios'], ['reportes', 'Reportes'], ['aprende', 'Aprende'], ['perfil', 'Perfil']];
+const bodyFor = (id) => ({ resumen: bodyResumen, dieta: bodyDieta, plan: bodyPlan, bienestar: bodyBienestar, cuerpo: bodyCuerpo, comidas: bodyComidas, peso: bodyPeso, gym: bodyGym, ejercicios: bodyEjercicios, reportes: bodyReportes, aprende: bodyAprende, perfil: bodyPerfil }[id] || bodyResumen)();
 
 // ---- wiring ----
 function wire(root) {

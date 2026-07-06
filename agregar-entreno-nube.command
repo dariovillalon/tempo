@@ -1,7 +1,6 @@
 #!/bin/bash
 # Doble-click: agrega SOLO la sesión de entreno de hoy a la nube (no borra nada más).
-# TIP: cerrá las pestañas de tempo en el navegador antes de correrlo, para que no
-# pisen el cambio. Después de "OK", abrí la web de nuevo y recargá (Cmd+Shift+R).
+# Se puede correr con la web abierta: va en transacción y las pestañas detectan el cambio solas.
 cd "$(dirname "$0")" || exit 1
 echo "Agregando la sesión de entreno de hoy a la nube…"
 npm install --silent 2>/dev/null

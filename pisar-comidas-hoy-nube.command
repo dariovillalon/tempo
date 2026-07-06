@@ -1,6 +1,6 @@
 #!/bin/bash
 # Doble-click: PISA las comidas de hoy en la nube con las de tu estado local (corrige valores ya cargados).
-# TIP: cerrá las pestañas de tempo en el navegador antes de correrlo.
+# Se puede correr con la web abierta: va en transacción y las pestañas detectan el cambio solas.
 # Después de "OK", abrí la web de nuevo y recargá (Cmd+Shift+R).
 cd "$(dirname "$0")" || exit 1
 echo "Pisando las comidas de hoy en la nube…"

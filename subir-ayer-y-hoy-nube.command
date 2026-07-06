@@ -1,6 +1,6 @@
 #!/bin/bash
 # Doble-click: sube a la nube las comidas de AYER y de HOY (merge, no duplica ni borra).
-# TIP: cerrá las pestañas de tempo en el navegador antes de correrlo.
+# Se puede correr con la web abierta: va en transacción y las pestañas detectan el cambio solas.
 cd "$(dirname "$0")" || exit 1
 HOY=$(date +%F)
 AYER=$(date -v-1d +%F)
