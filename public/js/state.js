@@ -191,7 +191,7 @@ export const defaultFitness = () => ({
 // Se agregan UNA vez (BILLS_SEED_VERSION) y solo las que no existan ya por
 // nombre — no pisa ediciones ni pagos marcados. Las anuales entran con el año
 // actual ya pagado (Dario ya pagó el anual 2026): reaparecen solas en enero.
-export const BILLS_SEED_VERSION = 2;
+export const BILLS_SEED_VERSION = 3;
 export const defaultBillsSeed = () => {
   const y = String(new Date().getFullYear());
   return [
@@ -205,7 +205,7 @@ export const defaultBillsSeed = () => {
     { name: 'Luz', frequency: 'mensual', dueDay: '', payMethod: 'Personal', ref: '', autoDebit: false, url: '', notes: 'Entro a EPEC y pago con el QR' },
     { name: 'Monotributo', frequency: 'mensual', dueDay: '', payMethod: '', ref: '', autoDebit: true, url: '', notes: '' },
     { name: 'Expensas', frequency: 'mensual', dueDay: '', payMethod: 'Personal Pay', ref: 'x00010192', autoDebit: false, url: 'https://admtown.com.ar/tpt/home.aspx#myPage', notes: 'Personal Pay ya asociado · no está TDV · 15-01' },
-    { name: 'Municipal', frequency: 'mensual', dueDay: '', payMethod: 'Ppay TD', ref: '3402127012000', autoDebit: false, url: 'https://www.tributariomuni.gob.ar/samweb/index.php?r=/objeto/objeto/index&to=1', notes: 'Pago mensual' },
+    { name: 'Municipal casa', frequency: 'mensual', dueDay: '', payMethod: 'Ppay TD', ref: '340212701200000', autoDebit: false, url: 'https://www.tributariomuni.gob.ar/samweb/index.php?r=/objeto/objeto/index&to=1', notes: 'Pago mensual' },
     { name: 'Agua', frequency: 'mensual', dueDay: '', payMethod: 'Crédito', ref: '818365', autoDebit: false, url: 'https://www.aguascordobesas.com.ar/espacioClientes/seccion/gestionDeuda', notes: '' },
     // Anuales — ya pagadas este año, reaparecen en enero del año que viene
     { name: 'Rentas (inmueble)', frequency: 'anual', dueDay: '', payMethod: 'Ppay TD', ref: '110143497348', autoDebit: false, url: 'https://www.rentascordoba.gob.ar/emisiontributaria/perfil/impuestos', notes: 'Pago anual', paidMonths: [y] },
@@ -486,6 +486,14 @@ export const initState = async () => {
     // Seed one-shot de las cuentas de Dario: agrega solo las que falten por
     // nombre (case-insensitive) — nunca pisa ni duplica lo ya cargado.
     if (state.billsSeedVersion !== BILLS_SEED_VERSION) {
+      // Correcciones sobre lo ya sembrado en versiones anteriores (renombres y
+      // nº de referencia mal cargado) — por nombre exacto, no toca lo demás.
+      const RENAMES = { 'Teléfono': 'Teléfono vieja', 'Municipal': 'Municipal casa' };
+      for (const b of state.bills) {
+        const nn = RENAMES[(b.name || '').trim()];
+        if (nn) b.name = nn;
+        if ((b.name || '').trim() === 'Municipal casa' && b.ref === '3402127012000') b.ref = '340212701200000';
+      }
       const have = new Set(state.bills.map(b => (b.name || '').trim().toLowerCase()));
       for (const seed of defaultBillsSeed()) {
         if (have.has(seed.name.trim().toLowerCase())) continue;
