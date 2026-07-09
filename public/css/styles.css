@@ -3120,6 +3120,16 @@ body.focus-on { overflow: hidden; }
 .bill-toggle { background: none; border: none; color: var(--text-3); cursor: pointer; font-size: 13px; padding: 2px 4px; flex: none; }
 .bill-toggle:hover { color: var(--text); }
 .bill-meta { font-size: 11.5px; white-space: nowrap; flex: none; }
+.bill-ref-chip { font-size: 11.5px; font-family: ui-monospace, monospace; white-space: nowrap; flex: none; border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; }
+/* Columnas alineadas en la fila colapsada: nombre corto a la izquierda y
+   referencia / link / DA como columnas de ancho fijo pegadas a la derecha. */
+.bill:not(.is-open) .bill-top { flex-wrap: nowrap; }
+.bill:not(.is-open) .bill-name { flex: 1 1 120px; max-width: 340px; }
+.bill-ref-cell { flex: none; min-width: 150px; margin-left: auto; display: flex; justify-content: flex-end; }
+.bill-link-cell { flex: none; width: 20px; text-align: center; }
+.bill-da-col { width: 24px; flex: none; text-align: center; font-size: 13px; color: var(--ok, #4caf50); }
+.bill-section-h { display: flex; align-items: center; justify-content: space-between; }
+.bill-da-h { font-size: 10.5px; color: var(--text-3); margin-right: 34px; /* alinea con .bill-da-col (24px) + botón ✕ */ }
 .bill:not(.is-open) .bill-top { margin-bottom: 0; }
 .bills-tabs { margin-bottom: 12px; }
 .hist-row { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13.5px; }

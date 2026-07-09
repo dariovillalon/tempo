@@ -89,7 +89,7 @@ export const dueInfo = (bills = state.bills) => {
     .sort((a, b) => a.days - b.days);
 };
 
-const addBill = (data) => mutate(s => { s.bills.push({ id: uid(), name: data.name || '', amount: data.amount || '', frequency: data.frequency || 'mensual', dueDay: data.dueDay || '', payMethod: data.payMethod || '', url: data.url || '', notes: '', paidMonths: [] }); });
+const addBill = (data) => mutate(s => { s.bills.push({ id: uid(), name: data.name || '', amount: data.amount || '', frequency: data.frequency || 'mensual', dueDay: data.dueDay || '', payMethod: data.payMethod || '', ref: data.ref || '', autoDebit: !!data.autoDebit, url: data.url || '', notes: '', paidMonths: [] }); });
 const patchBill = (id, patch) => mutate(s => { const b = s.bills.find(x => x.id === id); if (b) Object.assign(b, patch); });
 const delBill = (id) => mutate(s => { s.bills = s.bills.filter(x => x.id !== id); });
 const togglePaid = (id) => mutate(s => {
@@ -107,20 +107,25 @@ export const renderBills = (root) => {
   const bills = [...state.bills];
   const pend = bills.filter(b => !isPaid(b)).sort((a, b) => (+a.dueDay || 99) - (+b.dueDay || 99));
   const paid = bills.filter(b => isPaid(b));
-  const sumPend = pend.reduce((s, b) => s + (parseFloat(b.amount) || 0), 0);
 
   const billCard = (b) => {
     const paidNow = isPaid(b);
     const safeUrl = sanitizeUrl(b.url); // solo http/https; si no, se muestra como texto plano
     const open = expandedBills.has(b.id);
-    const meta = [FREQ_LBL[b.frequency || 'mensual'], b.dueDay ? `vence ${b.dueDay}` : '', b.payMethod].filter(Boolean).join(' · ');
+    // Referencia = el nro/código que hay que pegar en la página de pago. Va
+    // visible aun colapsada, con copiar de un click (para eso existe el campo).
+    const refChip = b.ref ? `<button class="btn btn-ghost btn-sm bill-ref-chip" data-bcopy="${escapeHtml(b.ref)}" title="Copiar referencia">${escapeHtml(b.ref)} ⧉</button>` : '';
+    // Columna DA fija (mismo ancho en todas las filas): ✓ si está adherida a
+    // débito automático, vacía si no.
+    const daCol = `<span class="bill-da-col" title="${b.autoDebit ? 'Adherida a débito automático' : 'Sin débito automático'}">${b.autoDebit ? '✓' : ''}</span>`;
     return `<div class="bill ${paidNow ? 'is-paid' : ''} ${open ? 'is-open' : ''}">
       <div class="bill-top">
         <button class="bill-toggle" data-btoggle="${b.id}" title="${open ? 'Contraer' : 'Expandir'}">${open ? '▾' : '▸'}</button>
         <input type="checkbox" data-bpaid="${b.id}" ${paidNow ? 'checked' : ''} title="Pagado">
         <input type="text" class="input bill-name" data-bid="${b.id}" data-f="name" value="${escapeHtml(b.name || '')}" placeholder="Nombre (ej: Visa BBVA)">
-        ${!open && meta ? `<span class="bill-meta muted">${escapeHtml(meta)}</span>` : ''}
-        <input type="number" class="input bill-amount" data-bid="${b.id}" data-f="amount" value="${escapeHtml(String(b.amount || ''))}" placeholder="$ monto">
+        <span class="bill-ref-cell">${refChip}</span>
+        <span class="bill-link-cell">${!open && safeUrl ? `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener" class="bill-link" title="Abrir link de pago">↗</a>` : ''}</span>
+        ${daCol}
         <button class="btn btn-ghost btn-sm" data-bdelete="${b.id}" title="Eliminar">✕</button>
       </div>
       ${open ? `
@@ -128,6 +133,10 @@ export const renderBills = (root) => {
         <select class="select" data-bid="${b.id}" data-f="frequency">${FREQS.map(([v, l]) => `<option value="${v}" ${(b.frequency || 'mensual') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
         <input type="number" min="1" max="31" class="input bill-due" data-bid="${b.id}" data-f="dueDay" value="${escapeHtml(String(b.dueDay || ''))}" placeholder="vence día" title="Día de vencimiento">
         <input type="text" class="input bill-method" data-bid="${b.id}" data-f="payMethod" value="${escapeHtml(b.payMethod || '')}" placeholder="Cómo pago (Ppay, débito…)">
+      </div>
+      <div class="bill-row2">
+        <input type="text" class="input" data-bid="${b.id}" data-f="ref" value="${escapeHtml(b.ref || '')}" placeholder="Referencia / nº para la página (ej: x00010192)">
+        <label class="muted text-xs" style="display:flex;align-items:center;gap:6px;white-space:nowrap"><input type="checkbox" data-bda="${b.id}" ${b.autoDebit ? 'checked' : ''}> Débito automático</label>
       </div>
       <input type="text" class="input bill-url" data-bid="${b.id}" data-f="url" value="${escapeHtml(b.url || '')}" placeholder="Link de pago (opcional)">
       ${b.url ? (safeUrl ? `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener" class="bill-link">↗ Abrir link de pago</a>` : `<span class="bill-link muted" title="Link inválido — solo http/https">${escapeHtml(b.url)}</span>`) : ''}
@@ -150,26 +159,30 @@ export const renderBills = (root) => {
   root.innerHTML = tabs + `
     <div class="card">
       <div class="card-title">Cuentas por pagar</div>
-      <div class="muted text-xs">Pendientes este período: <b>${pend.length}</b>${sumPend > 0 ? ` · ~$${sumPend.toLocaleString('es-AR')}` : ''}</div>
+      <div class="muted text-xs">Pendientes este período: <b>${pend.length}</b></div>
       <div class="row gap-6" style="flex-wrap:wrap;align-items:center;margin-top:12px">
         <input type="text" class="input" id="bill-new-name" placeholder="Nombre (ej: Gas, Visa…)" style="flex:1;min-width:150px">
-        <input type="number" class="input" id="bill-new-amount" placeholder="$ monto" style="width:110px">
         <select class="select" id="bill-new-freq" style="width:120px">${FREQS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
         <input type="number" min="1" max="31" class="input" id="bill-new-due" placeholder="día" style="width:72px">
         <button class="btn btn-primary" id="bill-add">+ Agregar</button>
       </div>
     </div>
-    ${pend.length ? `<div class="fit-section-h" style="border:none;padding-top:0">Pendientes</div>${pend.map(billCard).join('')}` : ''}
-    ${paid.length ? `<div class="fit-section-h">Pagadas este período</div>${paid.map(billCard).join('')}` : ''}
+    ${pend.length ? `<div class="fit-section-h bill-section-h" style="border:none;padding-top:0">Pendientes <span class="bill-da-h" title="Débito automático">DA</span></div>${pend.map(billCard).join('')}` : ''}
+    ${paid.length ? `<div class="fit-section-h bill-section-h">Pagadas este período <span class="bill-da-h" title="Débito automático">DA</span></div>${paid.map(billCard).join('')}` : ''}
     ${!bills.length ? `<div class="card"><div class="muted text-xs">Sin cuentas todavía. Agregá la primera arriba. Marcás "Pagado" cada mes y al siguiente se resetea solo.</div></div>` : ''}
   `;
 
   const $ = (s) => root.querySelector(s); const all = (s) => Array.from(root.querySelectorAll(s));
   wireTabs();
-  $('#bill-add')?.addEventListener('click', () => { const name = $('#bill-new-name').value.trim(); if (!name) return; addBill({ name, amount: $('#bill-new-amount').value, frequency: $('#bill-new-freq').value, dueDay: $('#bill-new-due').value }); });
+  $('#bill-add')?.addEventListener('click', () => { const name = $('#bill-new-name').value.trim(); if (!name) return; addBill({ name, frequency: $('#bill-new-freq').value, dueDay: $('#bill-new-due').value }); });
   all('[data-btoggle]').forEach(b => b.addEventListener('click', () => { const id = b.dataset.btoggle; if (expandedBills.has(id)) expandedBills.delete(id); else expandedBills.add(id); renderBills(root); }));
   all('[data-bpaid]').forEach(c => c.addEventListener('change', () => togglePaid(c.dataset.bpaid)));
   all('[data-bdelete]').forEach(b => b.addEventListener('click', () => delBill(b.dataset.bdelete)));
+  all('[data-bda]').forEach(c => c.addEventListener('change', () => patchBill(c.dataset.bda, { autoDebit: c.checked })));
+  all('[data-bcopy]').forEach(b => b.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(b.dataset.bcopy); toast('Referencia copiada'); }
+    catch { toast('No se pudo copiar — copiala a mano', 'error'); }
+  }));
   all('[data-bid][data-f]').forEach(el => el.addEventListener('change', () => {
     // Se guarda igual (puede ser un link a medio pegar), pero avisamos; el render nunca linkea URLs inválidas.
     if (el.dataset.f === 'url' && el.value.trim() && !sanitizeUrl(el.value)) toast('El link de pago debe empezar con http:// o https://', 'error');

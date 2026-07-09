@@ -187,6 +187,33 @@ export const defaultFitness = () => ({
   foodLibrary: defaultFoodLibrary(),
 });
 
+// ----- Cuentas por pagar: seed inicial (del Google Sheet "resumenes") -----
+// Se agregan UNA vez (BILLS_SEED_VERSION) y solo las que no existan ya por
+// nombre — no pisa ediciones ni pagos marcados. Las anuales entran con el año
+// actual ya pagado (Dario ya pagó el anual 2026): reaparecen solas en enero.
+export const BILLS_SEED_VERSION = 2;
+export const defaultBillsSeed = () => {
+  const y = String(new Date().getFullYear());
+  return [
+    { name: 'Visa BBVA', frequency: 'mensual', dueDay: 10, payMethod: '', ref: '', autoDebit: false, url: '', notes: 'La está pagando Cosca — me va a quedar un poco más igual para pagar' },
+    { name: 'Visa Santander', frequency: 'mensual', dueDay: 10, payMethod: '', ref: '', autoDebit: false, url: '', notes: '' },
+    { name: 'Mastercard', frequency: 'mensual', dueDay: 10, payMethod: '', ref: '', autoDebit: false, url: '', notes: '' },
+    { name: 'Gas', frequency: 'mensual', dueDay: '', payMethod: 'Autogestión', ref: '', autoDebit: false, url: '', notes: '' },
+    { name: 'Cable / Internet', frequency: 'mensual', dueDay: '', payMethod: '', ref: '', autoDebit: true, url: '', notes: 'DA verificado' },
+    { name: 'Teléfono vieja', frequency: 'mensual', dueDay: '', payMethod: '', ref: '', autoDebit: true, url: '', notes: 'DA verificado' },
+    { name: 'Teléfono mío', frequency: 'mensual', dueDay: '', payMethod: '', ref: '', autoDebit: false, url: '', notes: '' },
+    { name: 'Luz', frequency: 'mensual', dueDay: '', payMethod: 'Personal', ref: '', autoDebit: false, url: '', notes: 'Entro a EPEC y pago con el QR' },
+    { name: 'Monotributo', frequency: 'mensual', dueDay: '', payMethod: '', ref: '', autoDebit: true, url: '', notes: '' },
+    { name: 'Expensas', frequency: 'mensual', dueDay: '', payMethod: 'Personal Pay', ref: 'x00010192', autoDebit: false, url: 'https://admtown.com.ar/tpt/home.aspx#myPage', notes: 'Personal Pay ya asociado · no está TDV · 15-01' },
+    { name: 'Municipal', frequency: 'mensual', dueDay: '', payMethod: 'Ppay TD', ref: '3402127012000', autoDebit: false, url: 'https://www.tributariomuni.gob.ar/samweb/index.php?r=/objeto/objeto/index&to=1', notes: 'Pago mensual' },
+    { name: 'Agua', frequency: 'mensual', dueDay: '', payMethod: 'Crédito', ref: '818365', autoDebit: false, url: 'https://www.aguascordobesas.com.ar/espacioClientes/seccion/gestionDeuda', notes: '' },
+    // Anuales — ya pagadas este año, reaparecen en enero del año que viene
+    { name: 'Rentas (inmueble)', frequency: 'anual', dueDay: '', payMethod: 'Ppay TD', ref: '110143497348', autoDebit: false, url: 'https://www.rentascordoba.gob.ar/emisiontributaria/perfil/impuestos', notes: 'Pago anual', paidMonths: [y] },
+    { name: 'Rentas (auto)', frequency: 'anual', dueDay: '', payMethod: 'Ppay TD', ref: 'AB991KJ', autoDebit: false, url: 'https://www.rentascordoba.gob.ar/emision/ver-y-pagar/automotor', notes: 'Pago anual', paidMonths: [y] },
+    { name: 'Municipal (auto)', frequency: 'anual', dueDay: '', payMethod: '', ref: 'AB991KJ', autoDebit: false, url: 'https://www.municipalidad.com/rio3/deuda', notes: 'Pago anual', paidMonths: [y] },
+  ];
+};
+
 // ----- Mi tiempo (planificación personal, fuera del trabajo) -----
 export const defaultMyTime = () => ({
   days: {},        // 'YYYY-MM-DD' -> { energy, vibes:[], blocks:[{id,time,label,emoji,category,done}], journal }
@@ -276,6 +303,7 @@ const buildPayload = () => ({
   fitness: state.fitness,
   mytime: state.mytime,
   bills: state.bills,
+  billsSeedVersion: state.billsSeedVersion,
   promos: state.promos,
   reviews: state.reviews,
   lastUsed: state.lastUsed,
@@ -450,6 +478,21 @@ export const initState = async () => {
     if (!Array.isArray(state.mytime.reflections)) state.mytime.reflections = [];
     // Cuentas por pagar + promociones
     if (!Array.isArray(state.bills)) state.bills = [];
+    // Backfill de campos nuevos (referencia + débito automático)
+    for (const b of state.bills) {
+      if (b.ref === undefined) b.ref = '';
+      if (b.autoDebit === undefined) b.autoDebit = false;
+    }
+    // Seed one-shot de las cuentas de Dario: agrega solo las que falten por
+    // nombre (case-insensitive) — nunca pisa ni duplica lo ya cargado.
+    if (state.billsSeedVersion !== BILLS_SEED_VERSION) {
+      const have = new Set(state.bills.map(b => (b.name || '').trim().toLowerCase()));
+      for (const seed of defaultBillsSeed()) {
+        if (have.has(seed.name.trim().toLowerCase())) continue;
+        state.bills.push({ id: uid(), amount: '', paidMonths: [], ...seed });
+      }
+      state.billsSeedVersion = BILLS_SEED_VERSION;
+    }
     if (!Array.isArray(state.promos)) state.promos = [];
     // Cierres semanales (reviews) — backfill para estados anteriores
     if (!Array.isArray(state.reviews)) state.reviews = [];
