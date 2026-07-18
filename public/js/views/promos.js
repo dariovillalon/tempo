@@ -107,6 +107,14 @@ export const renderPromos = (root) => {
   const recurrentes = active.filter(p => !p.oneUse);
   const porUsar = mensuales.filter(p => !usedThisMonth(p));
   const vencidas = promos.filter(p => isExpired(p));
+  // "Para hoy": promos con día ESPECÍFICO que aplican al día de la fecha.
+  // Las de todos los días (7 días o sin días parseables) no cuentan como
+  // específicas de hoy, para que la sección sea señal y no ruido.
+  const wd = new Date().getDay();
+  const paraHoy = active.filter(p => {
+    const d = effectiveDays(p);
+    return Array.isArray(d) && d.length > 0 && d.length < 7 && d.includes(wd);
+  });
 
   const promoCard = (p) => {
     const used = usedThisMonth(p), exp = isExpired(p);
@@ -173,7 +181,9 @@ export const renderPromos = (root) => {
         <button class="btn btn-primary" id="promo-add">+ Agregar</button>
       </div>
     </div>
-    ${mensuales.length ? `<div class="fit-section-h" style="border:none;padding-top:0">Mensuales · 1 uso por mes</div>${groupByBank(mensuales).map(([bank, list]) =>
+    ${paraHoy.length ? `<div class="fit-section-h" style="border:none;padding-top:0">Para hoy · ${DAY_FULL[wd]}</div>${groupByBank(paraHoy).map(([bank, list]) =>
+      `<div class="muted text-xs" style="margin:8px 0 4px;font-weight:600">${escapeHtml(bank)}</div>${list.map(promoCard).join('')}`).join('')}` : ''}
+    ${mensuales.length ? `<div class="fit-section-h" ${paraHoy.length ? '' : 'style="border:none;padding-top:0"'}>Mensuales · 1 uso por mes</div>${groupByBank(mensuales).map(([bank, list]) =>
       `<div class="muted text-xs" style="margin:8px 0 4px;font-weight:600">${escapeHtml(bank)}</div>${list.map(promoCard).join('')}`).join('')}` : ''}
     ${recurrentes.length ? `<div class="fit-section-h">Recurrentes</div>${groupByBank(recurrentes).map(([bank, list]) =>
       `<div class="muted text-xs" style="margin:8px 0 4px;font-weight:600">${escapeHtml(bank)}</div>${list.map(promoCard).join('')}`).join('')}` : ''}
