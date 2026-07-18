@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tempo",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server.js"],
+      "cwd": "/Users/dario/Library/Application Support/Claude/local-agent-mode-sessions/32a18e8f-b8df-44fb-860e-3129100573c9/48e4fa2a-3643-4995-b176-3f4ace9c224b/local_0d35b858-2a08-41ff-ac0f-a6d84e68b27d/outputs/tempo",
+      "port": 7777
+    }
+  ]
+}

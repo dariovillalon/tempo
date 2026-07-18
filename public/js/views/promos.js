@@ -82,22 +82,47 @@ const delPromo = (id) => mutate(s => { s.promos = s.promos.filter(x => x.id !== 
 const useToday = (id) => mutate(s => { const p = s.promos.find(x => x.id === id); if (!p) return; p.usedDates = p.usedDates || []; p.usedDates.push(todayKey()); });
 const undoUse = (id) => mutate(s => { const p = s.promos.find(x => x.id === id); if (!p || !(p.usedDates || []).length) return; p.usedDates.pop(); });
 
+// Agrupar una lista de promos por banco (source), bancos y promos ordenados
+// alfabéticamente. Devuelve [[banco, promos]] listo para render.
+const groupByBank = (list) => {
+  const map = new Map();
+  const sorted = [...list].sort((a, b) => {
+    const ba = (a.source || 'Sin banco').toLowerCase(), bb = (b.source || 'Sin banco').toLowerCase();
+    return ba === bb ? (a.name || '').localeCompare(b.name || '') : ba.localeCompare(bb);
+  });
+  for (const p of sorted) {
+    const k = p.source || 'Sin banco';
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(p);
+  }
+  return [...map.entries()];
+};
+
 export const renderPromos = (root) => {
   const promos = [...state.promos];
   const active = promos.filter(p => !isExpired(p));
-  const porUsar = active.filter(p => !usedThisMonth(p));
-  const usados = active.filter(p => usedThisMonth(p));
+  // oneUse = promo mensual de un solo uso: se marca con el check y el estado
+  // se renueva solo al cambiar el mes (usedThisMonth mira el mes corriente).
+  const mensuales = active.filter(p => p.oneUse);
+  const recurrentes = active.filter(p => !p.oneUse);
+  const porUsar = mensuales.filter(p => !usedThisMonth(p));
   const vencidas = promos.filter(p => isExpired(p));
 
   const promoCard = (p) => {
     const used = usedThisMonth(p), exp = isExpired(p);
     const last = (p.usedDates || []).slice(-1)[0];
     const open = expandedPromos.has(p.id);
+    // Control de uso: las mensuales de un solo uso llevan check (marcable/desmarcable);
+    // las recurrentes conservan el botón "Usar hoy" que solo registra el uso.
+    const useCtl = exp ? '<span class="muted text-xs">(vencida)</span>'
+      : p.oneUse
+        ? `<label class="promo-usecheck" title="${used ? 'Usada este mes (destildá para deshacer)' : 'Marcá cuando la uses; se renueva al mes siguiente'}" style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" data-pcheck="${p.id}" ${used ? 'checked' : ''}><span class="muted text-xs">${used ? 'usada' : 'sin usar'}</span></label>`
+        : `<button class="btn ${used ? 'btn-ghost' : 'btn-secondary'} btn-sm" data-pgo="${p.id}">${used ? '✓ Usada' : 'Usar hoy'}</button>`;
     if (!open) {
       return `<div class="promo ${used ? 'is-used' : ''} ${exp ? 'is-exp' : ''}">
         <div class="day-block-line">
           <button class="bill-toggle" data-ptoggle="${p.id}" title="Expandir">▸</button>
-          ${exp ? '<span class="muted text-xs">(vencida)</span>' : `<button class="btn ${used ? 'btn-ghost' : 'btn-secondary'} btn-sm" data-pgo="${p.id}">${used ? '✓ Usada' : 'Usar hoy'}</button>`}
+          ${useCtl}
           <span class="db-line-title">${escapeHtml(p.name || '(sin nombre)')}</span>
           ${p.benefit ? `<span class="promo-badge">${escapeHtml(p.benefit)}</span>` : ''}
           ${p.card ? `<span class="muted text-xs">${escapeHtml(p.card)}</span>` : ''}
@@ -108,7 +133,7 @@ export const renderPromos = (root) => {
     return `<div class="promo is-open ${used ? 'is-used' : ''} ${exp ? 'is-exp' : ''}">
       <div class="promo-top">
         <button class="bill-toggle" data-ptoggle="${p.id}" title="Contraer">▾</button>
-        ${exp ? '' : `<button class="btn ${used ? 'btn-ghost' : 'btn-secondary'} btn-sm" data-pgo="${p.id}">${used ? '✓ Usada' : 'Usar hoy'}</button>`}
+        ${exp ? '' : useCtl}
         <input type="text" class="input promo-name" data-pid="${p.id}" data-f="name" value="${escapeHtml(p.name || '')}" placeholder="Promo (ej: 20% en super)">
         ${p.benefit ? `<span class="promo-badge">${escapeHtml(p.benefit)}</span>` : ''}
         <button class="btn btn-ghost btn-sm" data-pdelete="${p.id}" title="Eliminar">✕</button>
@@ -121,6 +146,7 @@ export const renderPromos = (root) => {
       <div class="promo-row2">
         <label class="muted text-xs promo-valid">Válida hasta <input type="date" class="input" data-pid="${p.id}" data-f="validUntil" value="${escapeHtml(p.validUntil || '')}"></label>
         <input type="text" class="input" data-pid="${p.id}" data-f="cadence" value="${escapeHtml(p.cadence || '')}" placeholder="Frecuencia (1/mes…)">
+        <label class="muted text-xs" style="display:flex;align-items:center;gap:4px;cursor:pointer" title="Mensual de un solo uso: aparece con check y se renueva cada mes"><input type="checkbox" data-poneuse="${p.id}" ${p.oneUse ? 'checked' : ''}> 1 uso/mes</label>
       </div>
       ${(() => {
         const eff = effectiveDays(p) || [];
@@ -147,8 +173,10 @@ export const renderPromos = (root) => {
         <button class="btn btn-primary" id="promo-add">+ Agregar</button>
       </div>
     </div>
-    ${porUsar.length ? `<div class="fit-section-h" style="border:none;padding-top:0">Por usar</div>${porUsar.map(promoCard).join('')}` : ''}
-    ${usados.length ? `<div class="fit-section-h">Usadas este mes</div>${usados.map(promoCard).join('')}` : ''}
+    ${mensuales.length ? `<div class="fit-section-h" style="border:none;padding-top:0">Mensuales · 1 uso por mes</div>${groupByBank(mensuales).map(([bank, list]) =>
+      `<div class="muted text-xs" style="margin:8px 0 4px;font-weight:600">${escapeHtml(bank)}</div>${list.map(promoCard).join('')}`).join('')}` : ''}
+    ${recurrentes.length ? `<div class="fit-section-h">Recurrentes</div>${groupByBank(recurrentes).map(([bank, list]) =>
+      `<div class="muted text-xs" style="margin:8px 0 4px;font-weight:600">${escapeHtml(bank)}</div>${list.map(promoCard).join('')}`).join('')}` : ''}
     ${vencidas.length ? `<div class="fit-section-h">Vencidas</div>${vencidas.map(promoCard).join('')}` : ''}
     ${!promos.length ? `<div class="card"><div class="muted text-xs">Sin promos todavía. Cargá la primera arriba (ej: el 20% del banco en el súper, 1 vez por mes por tarjeta).</div></div>` : ''}
   `;
@@ -157,6 +185,8 @@ export const renderPromos = (root) => {
   $('#promo-add')?.addEventListener('click', () => { const name = $('#promo-new-name').value.trim(); if (!name) return; addPromo({ name, source: $('#promo-new-source').value, card: $('#promo-new-card').value, validUntil: $('#promo-new-valid').value }); });
   all('[data-ptoggle]').forEach(b => b.addEventListener('click', () => { const id = b.dataset.ptoggle; if (expandedPromos.has(id)) expandedPromos.delete(id); else expandedPromos.add(id); renderPromos(root); }));
   all('[data-pgo]').forEach(b => b.addEventListener('click', () => { const p = state.promos.find(x => x.id === b.dataset.pgo); if (p && usedThisMonth(p)) undoUse(b.dataset.pgo); else useToday(b.dataset.pgo); }));
+  all('[data-pcheck]').forEach(c => c.addEventListener('change', () => { if (c.checked) useToday(c.dataset.pcheck); else undoUse(c.dataset.pcheck); }));
+  all('[data-poneuse]').forEach(c => c.addEventListener('change', () => patchPromo(c.dataset.poneuse, { oneUse: c.checked })));
   all('[data-pundo]').forEach(a => a.addEventListener('click', () => undoUse(a.dataset.pundo)));
   all('[data-pday]').forEach(b => b.addEventListener('click', () => togglePromoDay(b.dataset.pdayof, +b.dataset.pday)));
   all('[data-pdelete]').forEach(b => b.addEventListener('click', () => delPromo(b.dataset.pdelete)));
