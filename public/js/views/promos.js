@@ -3,6 +3,7 @@
 
 import { state, mutate } from '../state.js';
 import { uid, escapeHtml, todayKey } from '../utils.js';
+import { toast } from '../components/toast.js';
 
 const expandedPromos = new Set(); // promos expandidas (por defecto colapsadas)
 const monthNow = () => todayKey().slice(0, 7); // mes local, no UTC
@@ -78,7 +79,17 @@ const togglePromoDay = (id, day) => mutate(s => {
   const base = Array.isArray(p.days) ? p.days.slice() : (parseCadenceDays(p.cadence || '') || []);
   p.days = base.includes(day) ? base.filter(x => x !== day) : [...base, day].sort((a, b) => a - b);
 });
-const delPromo = (id) => mutate(s => { s.promos = s.promos.filter(x => x.id !== id); });
+// Mismo criterio que Cuentas: borrar es un toque, así que se puede deshacer.
+const delPromo = (id) => {
+  const idx = state.promos.findIndex(x => x.id === id);
+  if (idx < 0) return;
+  const removed = state.promos[idx];
+  mutate(s => { s.promos = s.promos.filter(x => x.id !== id); });
+  toast(`Eliminé "${removed.name || 'la promo'}"`, '', {
+    actionLabel: 'Deshacer', duration: 6000,
+    onAction: () => mutate(s => { if (!s.promos.some(x => x.id === id)) s.promos.splice(Math.min(idx, s.promos.length), 0, removed); }),
+  });
+};
 const useToday = (id) => mutate(s => { const p = s.promos.find(x => x.id === id); if (!p) return; p.usedDates = p.usedDates || []; p.usedDates.push(todayKey()); });
 const undoUse = (id) => mutate(s => { const p = s.promos.find(x => x.id === id); if (!p || !(p.usedDates || []).length) return; p.usedDates.pop(); });
 
@@ -132,9 +143,8 @@ export const renderPromos = (root) => {
           <button class="bill-toggle" data-ptoggle="${p.id}" title="Expandir">▸</button>
           ${useCtl}
           <span class="db-line-title">${escapeHtml(p.name || '(sin nombre)')}</span>
-          ${p.benefit ? `<span class="promo-badge">${escapeHtml(p.benefit)}</span>` : ''}
-          ${p.card ? `<span class="muted text-xs">${escapeHtml(p.card)}</span>` : ''}
-          <button class="btn btn-ghost btn-sm" data-pdelete="${p.id}" title="Eliminar">✕</button>
+          ${p.benefit || p.card ? `<span class="promo-meta">${p.benefit ? `<span class="promo-badge">${escapeHtml(p.benefit)}</span>` : ''}${p.card ? `<span class="muted text-xs">${escapeHtml(p.card)}</span>` : ''}</span>` : ''}
+          <button class="btn btn-ghost btn-sm promo-del" data-pdelete="${p.id}" title="Eliminar">✕</button>
         </div>
       </div>`;
     }

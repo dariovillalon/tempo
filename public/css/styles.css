@@ -3178,3 +3178,43 @@ body.focus-on { overflow: hidden; }
 .pom-float-ctrls { display: flex; gap: 1px; }
 .pom-float-btn { background: none; border: none; cursor: pointer; font-size: 13px; line-height: 1; padding: 5px 6px; border-radius: 8px; color: var(--text-2); }
 .pom-float-btn:hover { background: var(--surface-3); color: var(--text); }
+
+/* ---- Cuentas: vencimiento en la fila colapsada ---- */
+.bill-due-meta { color: var(--text-3); margin-right: 8px; align-self: center; }
+.bill-due-meta.is-soon { color: var(--accent); font-weight: 600; }
+.bill-due-meta.is-late { color: var(--red); font-weight: 600; }
+.promo-meta { display: inline-flex; align-items: center; gap: 8px; flex: none; }
+
+/* ---- Celular: nada se desplaza de costado ---- */
+.view-h-actions { flex-wrap: wrap; }
+.today-grid > * { min-width: 0; }
+@media (max-width: 600px) {
+  /* Cuentas colapsada: línea 1 = nombre + link/DA/✕; línea 2 = vencimiento + referencia */
+  .bill:not(.is-open) .bill-top { flex-wrap: wrap; row-gap: 6px; }
+  .bill:not(.is-open) .bill-name { flex: 1 1 0; min-width: 0; max-width: none; }
+  .bill-ref-cell { order: 10; flex: 1 0 100%; min-width: 0; margin-left: 0; justify-content: flex-start; padding-left: 52px; }
+  .bill-ref-cell:empty { display: none; }
+  .bill-ref-chip { overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  /* Promos colapsada: línea 1 = uso + nombre + ✕; línea 2 = beneficio + tarjeta */
+  .promo:not(.is-open) .day-block-line { flex-wrap: wrap; row-gap: 4px; }
+  .promo-del { order: 1; }
+  .promo:not(.is-open) .promo-meta { order: 2; flex: 1 0 100%; padding-left: 30px; }
+  /* Hoy: 4 stats en 375px no entran; van de a 2 */
+  .today-stats { grid-template-columns: repeat(2, 1fr); }
+  .board-filter-group { flex-wrap: wrap; }
+  /* En táctil el toggle (34px) y el check (20px) son más grandes: la 2ª línea sigue alineada al nombre */
+  @media (pointer: coarse) {
+    .bill-ref-cell { padding-left: 77px; }
+    .promo:not(.is-open) .promo-meta { padding-left: 42px; }
+  }
+  /* Board: una columna a lo ancho, sin scroll anidado */
+  .kanban > .kanban-col { flex: 1 1 100%; max-height: none; }
+  .kanban > .kanban-col.is-collapsed { flex: 1 1 100%; min-width: 0; }
+  .kanban-col.is-collapsed .kanban-col-h { flex-direction: row; padding: 10px 12px; }
+  .kanban-col.is-collapsed .kanban-col-label { writing-mode: horizontal-tb; transform: none; }
+}
+/* Dedo, no mouse: controles de Cuentas/Promos/Comidas con área tocable decente */
+@media (pointer: coarse) {
+  .bill .btn-sm, .promo .btn-sm, .bill-toggle, .fit-meal .btn-sm { min-width: 34px; min-height: 34px; }
+  .bill input[type=checkbox], .promo input[type=checkbox] { width: 20px; height: 20px; }
+}

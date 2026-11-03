@@ -244,6 +244,7 @@ export const state = {
 };
 
 let initialized = false;
+const LAST_USED_KEY = 'tempo.lastUsed';
 
 // ----- Disponibilidad del vault -----
 // El vault de Obsidian vive en el filesystem del Mac: el server local lo puede
@@ -281,6 +282,10 @@ let saveQueued = false;
 let retryCount = 0;
 let retryTimer = null;
 let lastFailToastAt = 0;
+// JSON del último payload que el server tiene confirmado (cargado o guardado).
+// Si el payload actual es idéntico, el PUT se saltea: no bumpea rev, así otro
+// dispositivo abierto no recibe un 409 por un guardado que no cambió nada.
+let lastSavedJson = null;
 
 const MAX_RETRIES = 5;
 
@@ -291,22 +296,24 @@ export const syncServerRev = (rev) => {
   if (typeof rev === 'number' && rev > serverRev) serverRev = rev;
 };
 
-const buildPayload = () => ({
-  projects: state.projects,
-  tasks: state.tasks,
-  blocks: state.blocks,
-  pomodoroLog: state.pomodoroLog,
-  whiteboards: state.whiteboards,
-  activity: state.activity,
-  pomodoroSettings: state.pomodoroSettings,
-  settings: state.settings,
-  fitness: state.fitness,
-  mytime: state.mytime,
-  bills: state.bills,
-  billsSeedVersion: state.billsSeedVersion,
-  promos: state.promos,
-  reviews: state.reviews,
-  lastUsed: state.lastUsed,
+// `src` permite armar el mismo payload desde un blob recién bajado del server
+// (para fijar lastSavedJson antes de que las migraciones de initState lo toquen).
+const buildPayload = (src = state) => ({
+  projects: src.projects,
+  tasks: src.tasks,
+  blocks: src.blocks,
+  pomodoroLog: src.pomodoroLog,
+  whiteboards: src.whiteboards,
+  activity: src.activity,
+  pomodoroSettings: src.pomodoroSettings,
+  settings: src.settings,
+  fitness: src.fitness,
+  mytime: src.mytime,
+  bills: src.bills,
+  billsSeedVersion: src.billsSeedVersion,
+  promos: src.promos,
+  reviews: src.reviews,
+  lastUsed: src.lastUsed,
 });
 
 const scheduleRetry = () => {
@@ -330,12 +337,22 @@ const maybeFailToast = (msg) => {
 async function doSave() {
   if (saveInFlight) { saveQueued = true; return; }
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  const payload = buildPayload();
+  const payloadJson = JSON.stringify(payload);
+  if (payloadJson === lastSavedJson) {
+    // Mutación sin cambio real (ej. re-elegir la misma opción): nada que mandar.
+    dirtySinceSave = false;
+    retryCount = 0;
+    if (saveStatus !== 'idle') setSaveStatus('idle');
+    return;
+  }
   saveInFlight = true;
   setSaveStatus('saving');
   const seqAtStart = mutSeq;
   try {
-    const res = await api.putState(buildPayload(), serverRev);
+    const res = await api.putState(payload, serverRev);
     if (typeof res?.rev === 'number') serverRev = res.rev;
+    lastSavedJson = payloadJson;
     retryCount = 0;
     saveInFlight = false;
     if (mutSeq === seqAtStart) dirtySinceSave = false;
@@ -383,8 +400,10 @@ const flushPendingSave = () => {
   // Con un doSave en vuelo, ese PUT ya lleva estos cambios: duplicarlo con el
   // mismo rev le regalaría un 409 espurio a uno de los dos (y el handler recarga).
   if (saveInFlight) return;
+  const payloadJson = JSON.stringify(buildPayload());
+  if (payloadJson === lastSavedJson) { dirtySinceSave = false; return; }
   const seqAtFlush = mutSeq;
-  const body = JSON.stringify({ state: buildPayload(), rev: serverRev });
+  const body = `{"state":${payloadJson},"rev":${JSON.stringify(serverRev)}}`;
   const opts = { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body };
   // Si la pestaña sigue viva (visibilitychange), aprendé el rev nuevo para
   // que el próximo save no choque con 409. "Limpio" solo si no hubo mutaciones
@@ -394,6 +413,7 @@ const flushPendingSave = () => {
     .then(j => {
       if (j && typeof j.rev === 'number') {
         serverRev = j.rev;
+        lastSavedJson = payloadJson;
         if (mutSeq === seqAtFlush) dirtySinceSave = false;
       }
     });
@@ -419,6 +439,9 @@ export const initState = async () => {
   } catch { vaultAvailable = true; }
   try {
     const data = await api.getState();
+    // Antes de las migraciones de abajo (mutan data por referencia): lo que
+    // migren cuenta como cambio y viaja en el próximo guardado.
+    lastSavedJson = JSON.stringify(buildPayload(data));
     Object.assign(state, data);
     serverRev = typeof data.rev === 'number' ? data.rev : 0;
     // ensure required arrays exist
@@ -441,6 +464,8 @@ export const initState = async () => {
       state.settings.assignees = DEFAULT_ASSIGNEES.slice();
     }
     state.lastUsed ||= { projectId: null, view: 'today' };
+    // La última vista es de cada dispositivo (celu y compu no se pisan)
+    try { Object.assign(state.lastUsed, JSON.parse(localStorage.getItem(LAST_USED_KEY) || '{}')); } catch { /* sin storage: queda la del server */ }
     // Fitness slice — backfill so older state files gain it transparently
     state.fitness ||= defaultFitness();
     state.fitness.profile ||= defaultFitness().profile;
@@ -547,7 +572,10 @@ export const initState = async () => {
 export const reloadState = async () => {
   try {
     const data = await api.getState();
+    lastSavedJson = JSON.stringify(buildPayload(data));
+    const myLastUsed = state.lastUsed;
     Object.assign(state, data);
+    if (myLastUsed) state.lastUsed = myLastUsed; // la vista de este dispositivo, no la del otro
     serverRev = typeof data.rev === 'number' ? data.rev : serverRev;
     state.projects ||= []; state.tasks ||= []; state.blocks ||= [];
     state.pomodoroLog ||= []; state.whiteboards ||= []; state.activity ||= [];
@@ -1284,6 +1312,10 @@ export const setVault = (vaultInfo) => {
   mutate(s => { s.vault = vaultInfo; }, { skipSave: true }); // server already persisted vault
 };
 
+// Navegar no guarda en el server: cada cambio de vista era un PUT del blob
+// entero (+ rev) y le metía 409 al otro dispositivo. Va a localStorage; el
+// server se entera con el próximo guardado real.
 export const setLastUsed = (patch) => {
-  mutate(s => { Object.assign(s.lastUsed, patch); });
+  mutate(s => { Object.assign(s.lastUsed, patch); }, { skipSave: true });
+  try { localStorage.setItem(LAST_USED_KEY, JSON.stringify(state.lastUsed)); } catch { /* storage bloqueado: no pasa nada */ }
 };
