@@ -91,7 +91,28 @@ export const dueInfo = (bills = state.bills) => {
 
 const addBill = (data) => mutate(s => { s.bills.push({ id: uid(), name: data.name || '', amount: data.amount || '', frequency: data.frequency || 'mensual', dueDay: data.dueDay || '', payMethod: data.payMethod || '', ref: data.ref || '', autoDebit: !!data.autoDebit, url: data.url || '', notes: '', paidMonths: [] }); });
 const patchBill = (id, patch) => mutate(s => { const b = s.bills.find(x => x.id === id); if (b) Object.assign(b, patch); });
-const delBill = (id) => mutate(s => { s.bills = s.bills.filter(x => x.id !== id); });
+// El ✕ queda a un toque en el celular: borrar avisa con "Deshacer" en vez de confirmar.
+const delBill = (id) => {
+  const idx = state.bills.findIndex(x => x.id === id);
+  if (idx < 0) return;
+  const removed = state.bills[idx];
+  mutate(s => { s.bills = s.bills.filter(x => x.id !== id); });
+  toast(`Eliminé "${removed.name || 'la cuenta'}"`, '', {
+    actionLabel: 'Deshacer', duration: 6000,
+    onAction: () => mutate(s => { if (!s.bills.some(x => x.id === id)) s.bills.splice(Math.min(idx, s.bills.length), 0, removed); }),
+  });
+};
+// Vencimiento para la fila colapsada (solo mensuales impagas con día cargado).
+const dueLabel = (b) => {
+  const info = dueInfo([b])[0];
+  if (!info) return '';
+  const { days, dueDay } = info;
+  const [txt, cls] = days < 0 ? [`vencida (día ${dueDay})`, 'is-late']
+    : days === 0 ? ['vence hoy', 'is-late']
+    : days <= 5 ? [`vence en ${days} d`, 'is-soon']
+    : [`día ${dueDay}`, ''];
+  return `<span class="bill-meta bill-due-meta ${cls}">${txt}</span>`;
+};
 const togglePaid = (id) => mutate(s => {
   const b = s.bills.find(x => x.id === id); if (!b) return;
   b.paidMonths = b.paidMonths || [];
@@ -123,10 +144,10 @@ export const renderBills = (root) => {
         <button class="bill-toggle" data-btoggle="${b.id}" title="${open ? 'Contraer' : 'Expandir'}">${open ? '▾' : '▸'}</button>
         <input type="checkbox" data-bpaid="${b.id}" ${paidNow ? 'checked' : ''} title="Pagado">
         <input type="text" class="input bill-name" data-bid="${b.id}" data-f="name" value="${escapeHtml(b.name || '')}" placeholder="Nombre (ej: Visa BBVA)">
-        <span class="bill-ref-cell">${refChip}</span>
+        <span class="bill-ref-cell">${open ? '' : dueLabel(b)}${refChip}</span>
         <span class="bill-link-cell">${!open && safeUrl ? `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener" class="bill-link" title="Abrir link de pago">↗</a>` : ''}</span>
         ${daCol}
-        <button class="btn btn-ghost btn-sm" data-bdelete="${b.id}" title="Eliminar">✕</button>
+        <button class="btn btn-ghost btn-sm bill-del" data-bdelete="${b.id}" title="Eliminar">✕</button>
       </div>
       ${open ? `
       <div class="bill-row2">

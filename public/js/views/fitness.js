@@ -876,7 +876,7 @@ function bodyComidas() {
         <span class="muted text-xs" style="white-space:nowrap">${isToday ? 'Hoy' : fmtDayName(k)}</span>
       </div>
       <button class="btn btn-ghost btn-sm" id="fit-c-next" title="Día siguiente" ${isToday ? 'disabled style="opacity:.4;pointer-events:none"' : ''}>▶</button>
-      <button class="btn btn-secondary btn-sm" id="fit-c-today" ${isToday ? 'disabled style="opacity:.4;pointer-events:none"' : ''}>Hoy</button>
+      ${isToday ? '' : '<button class="btn btn-secondary btn-sm" id="fit-c-today">Hoy</button>'}
     </div>${isToday ? '' : `<div class="muted text-xs" style="margin-top:6px">Estás viendo el ${fmtDayName(k)}. Lo que toques o borres se guarda en ese día.</div>`}</div>`;
   const pickCard = `<div class="card"><div class="row" style="justify-content:space-between;align-items:center"><div class="card-title" style="margin:0">Elegí lo que comiste</div><button class="btn btn-ghost btn-sm" id="fit-food-toggle">${showFoodForm ? 'Cerrar' : '+ Alimento propio'}</button></div>${customForm}${grid}</div>`;
   const dayCard = `<div class="card"><div class="card-title">Comidas de ${dayLabel}</div>${totals}<div class="fit-meals" style="margin-top:10px">${mealsList}</div></div>`;
@@ -899,7 +899,8 @@ function bodyComidas() {
       <div class="fit-rec-item info">Solés quedar corto de lácteos y fruta/verdura: apuntá a una fruta por comida y un lácteo proteico al día (yogur griego, ricota).</div>
       <div class="fit-rec-item info">¿Te cuesta llegar a las calorías? El batido (leche + banana + avena + maní + whey) son calorías líquidas fáciles. Lo cargué abajo en "Para sumar masa".</div>
     </div></div>`;
-  return navCard + pickCard + dayCard + optCard + manual;
+  // Lo comido va arriba de la biblioteca: en el celular quedaba 2 pantallas más abajo.
+  return navCard + dayCard + pickCard + optCard + manual;
 }
 
 // ---- Lectura de captura de balanza (Zepp Life u otra) por OCR en el navegador ----
