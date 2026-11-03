@@ -3202,6 +3202,11 @@ body.focus-on { overflow: hidden; }
   /* Hoy: 4 stats en 375px no entran; van de a 2 */
   .today-stats { grid-template-columns: repeat(2, 1fr); }
   .board-filter-group { flex-wrap: wrap; }
+  /* En táctil el toggle (34px) y el check (20px) son más grandes: la 2ª línea sigue alineada al nombre */
+  @media (pointer: coarse) {
+    .bill-ref-cell { padding-left: 77px; }
+    .promo:not(.is-open) .promo-meta { padding-left: 42px; }
+  }
   /* Board: una columna a lo ancho, sin scroll anidado */
   .kanban > .kanban-col { flex: 1 1 100%; max-height: none; }
   .kanban > .kanban-col.is-collapsed { flex: 1 1 100%; min-width: 0; }

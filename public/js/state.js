@@ -403,7 +403,7 @@ const flushPendingSave = () => {
   const payloadJson = JSON.stringify(buildPayload());
   if (payloadJson === lastSavedJson) { dirtySinceSave = false; return; }
   const seqAtFlush = mutSeq;
-  const body = JSON.stringify({ state: buildPayload(), rev: serverRev });
+  const body = `{"state":${payloadJson},"rev":${JSON.stringify(serverRev)}}`;
   const opts = { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body };
   // Si la pestaña sigue viva (visibilitychange), aprendé el rev nuevo para
   // que el próximo save no choque con 409. "Limpio" solo si no hubo mutaciones
