@@ -95,7 +95,8 @@ export const enterFocusMode = (taskId) => {
   render();
 };
 
-const exitFocusMode = () => {
+export const isFocusModeOpen = () => !!overlay?.classList.contains('open');
+export const exitFocusMode = () => {
   if (!overlay) return;
   overlay.classList.remove('open');
   document.body.classList.remove('focus-on');

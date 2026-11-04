@@ -102,6 +102,8 @@ const close = () => {
   input.value = '';
   activeIdx = 0;
 };
+export const isQuickCaptureOpen = () => !!backdrop?.classList.contains('open');
+export const closeQuickCapture = () => { if (backdrop) close(); };
 
 const ensureNotes = async () => {
   // refetch every 60s while open

@@ -2,7 +2,7 @@
 
 import { api } from './api.js';
 import { state, initState, subscribe, getSaveStatus, runObsidianAutoImport, refreshTasksFromVault, reloadState, isVaultAvailable } from './state.js';
-import { router } from './router.js';
+import { router, initialRoute } from './router.js';
 import { todayKey, fmtDate, escapeHtml } from './utils.js';
 import { initModals } from './components/modal.js';
 import { initBlockModal } from './components/blockModal.js';
@@ -144,8 +144,7 @@ const main = async () => {
   if (state.settings?.notifEnabled !== false) startNotifications();
 
   // Initial route
-  const initialRoute = state.lastUsed?.view || 'today';
-  router.go(initialRoute);
+  router.go(initialRoute());
 
   // Auto-import Obsidian projects (silent, idempotent) every time the app boots.
   // Picks up new folders in <vault>/<root>/ down to settings.autoImportDepth.

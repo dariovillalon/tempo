@@ -904,12 +904,18 @@ async function suggestVaults() {
 // INTERVAL, COUNT, UNTIL, BYDAY.
 
 // Cache per-URL so multiple subscriptions don't fight each other.
-const icsCache = new Map(); // url -> { fetchedAt, body }
+const icsCache = new Map(); // url -> { fetchedAt, body } | { fetchedAt, error }
 const ICS_TTL_MS = 10 * 60 * 1000;
+const ICS_ERR_RETRY_MS = 60 * 1000;
 
 async function fetchICS(url) {
   const hit = icsCache.get(url);
-  if (hit && (Date.now() - hit.fetchedAt) < ICS_TTL_MS) return hit.body;
+  if (hit && (Date.now() - hit.fetchedAt) < (hit.ttl || ICS_TTL_MS)) {
+    // Los fallos también se cachean: un calendario caído (404) no se re-pide
+    // (ni frena Hoy/Agenda hasta 10s) en cada render durante el TTL.
+    if (hit.error) throw Object.assign(new Error(hit.error), { cached: true });
+    return hit.body;
+  }
   let httpUrl = url;
   if (httpUrl.startsWith('webcal://')) httpUrl = 'https://' + httpUrl.slice('webcal://'.length);
   // Timeout vía AbortController (mismo patrón que fetchBtcPrice): cubre también
@@ -918,10 +924,20 @@ async function fetchICS(url) {
   const t = setTimeout(() => ctrl.abort(), 10_000);
   try {
     const res = await fetch(httpUrl, { redirect: 'follow', signal: ctrl.signal });
-    if (!res.ok) throw new Error(`ICS fetch ${res.status}`);
+    if (!res.ok) {
+      res.body?.cancel().catch(() => {}); // liberar el socket sin esperar al GC
+      throw new Error(`ICS fetch ${res.status}`);
+    }
     const body = await res.text();
     icsCache.set(url, { fetchedAt: Date.now(), body });
     return body;
+  } catch (e) {
+    const error = e.message || String(e);
+    // 4xx (calendario borrado o privado) es permanente: TTL completo. Timeout,
+    // red o 5xx: reintentar en 1 min, que un tropiezo no esconda la agenda 10 min.
+    const ttl = /^ICS fetch 4\d\d$/.test(error) ? ICS_TTL_MS : ICS_ERR_RETRY_MS;
+    icsCache.set(url, { fetchedAt: Date.now(), error, ttl });
+    throw e;
   } finally {
     clearTimeout(t);
   }
@@ -1990,7 +2006,7 @@ async function handleApi(req, res, parsedUrl) {
           return expandEvents(parseICS(body), from, to)
             .map(ev => ({ ...ev, calendar: i }));
         } catch (e) {
-          console.warn('[ics] fetch failed for', u, e.message);
+          if (!e.cached) console.warn('[ics] fetch failed for', u, e.message); // el cacheado ya se logueó
           return [];
         }
       }));
