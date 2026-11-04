@@ -17,6 +17,8 @@ import { renderSettings }   from './views/settings.js';
 import { setLastUsed, state } from './state.js';
 import { expandSidebarProject } from './components/projectModal.js';
 import { closeAllModals } from './components/modal.js';
+import { isQuickCaptureOpen, closeQuickCapture } from './components/quickCapture.js';
+import { isFocusModeOpen, exitFocusMode } from './components/focusMode.js';
 
 const TITLES = {
   today: 'Hoy',
@@ -97,7 +99,10 @@ const renderView = (route) => {
 // una entrada; atrás vuelve a la anterior y, si hay algo abierto encima (modal,
 // captura rápida, menú lateral), primero lo cierra y se queda en la vista.
 const hashFor = (route) => '#' + route.split('/').map(encodeURIComponent).join('/');
-const isKnownRoute = (route) => { const base = route.split('/')[0]; return base === 'project' || Object.hasOwn(TITLES, base); };
+const isKnownRoute = (route) => {
+  const [base, id] = route.split('/');
+  return base === 'project' ? !!id : Object.hasOwn(TITLES, base);
+};
 const routeFromHash = () => {
   const raw = location.hash.replace(/^#\/?/, '');
   if (!raw) return '';
@@ -127,10 +132,13 @@ export const router = {
 };
 
 window.addEventListener('popstate', () => {
-  const overlay = document.querySelector('.modal-backdrop.open, .qc-backdrop.open');
-  if (overlay || document.body.classList.contains('nav-open')) {
+  const modalOpen = !!document.querySelector('.modal-backdrop.open');
+  const navOpen = document.body.classList.contains('nav-open');
+  if (modalOpen || navOpen || isQuickCaptureOpen() || isFocusModeOpen()) {
+    // Cada componente con su propio cierre (limpia input, timers, etc.)
     closeAllModals();
-    document.querySelector('.qc-backdrop.open')?.classList.remove('open');
+    closeQuickCapture();
+    if (isFocusModeOpen()) exitFocusMode();
     document.body.classList.remove('nav-open');
     if (currentRoute) writeHistory(currentRoute, false); // re-apilar: la vista no cambia
     return;
