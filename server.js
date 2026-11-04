@@ -904,12 +904,17 @@ async function suggestVaults() {
 // INTERVAL, COUNT, UNTIL, BYDAY.
 
 // Cache per-URL so multiple subscriptions don't fight each other.
-const icsCache = new Map(); // url -> { fetchedAt, body }
+const icsCache = new Map(); // url -> { fetchedAt, body } | { fetchedAt, error }
 const ICS_TTL_MS = 10 * 60 * 1000;
 
 async function fetchICS(url) {
   const hit = icsCache.get(url);
-  if (hit && (Date.now() - hit.fetchedAt) < ICS_TTL_MS) return hit.body;
+  if (hit && (Date.now() - hit.fetchedAt) < ICS_TTL_MS) {
+    // Los fallos también se cachean: un calendario caído (404) no se re-pide
+    // (ni frena Hoy/Agenda hasta 10s) en cada render durante el TTL.
+    if (hit.error) throw Object.assign(new Error(hit.error), { cached: true });
+    return hit.body;
+  }
   let httpUrl = url;
   if (httpUrl.startsWith('webcal://')) httpUrl = 'https://' + httpUrl.slice('webcal://'.length);
   // Timeout vía AbortController (mismo patrón que fetchBtcPrice): cubre también
@@ -922,6 +927,9 @@ async function fetchICS(url) {
     const body = await res.text();
     icsCache.set(url, { fetchedAt: Date.now(), body });
     return body;
+  } catch (e) {
+    icsCache.set(url, { fetchedAt: Date.now(), error: e.message || String(e) });
+    throw e;
   } finally {
     clearTimeout(t);
   }
@@ -1990,7 +1998,7 @@ async function handleApi(req, res, parsedUrl) {
           return expandEvents(parseICS(body), from, to)
             .map(ev => ({ ...ev, calendar: i }));
         } catch (e) {
-          console.warn('[ics] fetch failed for', u, e.message);
+          if (!e.cached) console.warn('[ics] fetch failed for', u, e.message); // el cacheado ya se logueó
           return [];
         }
       }));

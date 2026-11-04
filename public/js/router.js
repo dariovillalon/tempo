@@ -16,6 +16,7 @@ import { renderProject }    from './views/project.js';
 import { renderSettings }   from './views/settings.js';
 import { setLastUsed, state } from './state.js';
 import { expandSidebarProject } from './components/projectModal.js';
+import { closeAllModals } from './components/modal.js';
 
 const TITLES = {
   today: 'Hoy',
@@ -91,9 +92,32 @@ const renderView = (route) => {
   });
 };
 
+// ----- Rutas en la URL (#bills, #project/<id>) -----
+// Sin historial, el gesto "atrás" del celular cerraba la PWA. Cada vista apila
+// una entrada; atrás vuelve a la anterior y, si hay algo abierto encima (modal,
+// captura rápida, menú lateral), primero lo cierra y se queda en la vista.
+const hashFor = (route) => '#' + route.split('/').map(encodeURIComponent).join('/');
+const isKnownRoute = (route) => { const base = route.split('/')[0]; return base === 'project' || Object.hasOwn(TITLES, base); };
+const routeFromHash = () => {
+  const raw = location.hash.replace(/^#\/?/, '');
+  if (!raw) return '';
+  let route;
+  try { route = raw.split('/').map(decodeURIComponent).join('/'); } catch { return ''; }
+  return isKnownRoute(route) ? route : '';
+};
+// Vista de arranque: la del link (#...) gana sobre la última usada en este dispositivo.
+export const initialRoute = () => routeFromHash() || state.lastUsed?.view || 'today';
+
+const writeHistory = (route, replace) => {
+  try { history[replace ? 'replaceState' : 'pushState']({ route }, '', hashFor(route)); }
+  catch (e) { console.warn('[router] history no disponible', e); }
+};
+
 export const router = {
-  go(route) {
+  go(route, { fromHistory = false } = {}) {
     if (route === currentRoute) return;
+    // La primera vista reemplaza la entrada: atrás desde ahí sale de la app, no a una página vacía.
+    if (!fromHistory) writeHistory(route, !currentRoute);
     currentRoute = route;
     setLastUsed({ view: route });
     renderView(route);
@@ -101,3 +125,18 @@ export const router = {
   current() { return currentRoute; },
   refresh() { renderView(currentRoute || 'today'); },
 };
+
+window.addEventListener('popstate', () => {
+  const overlay = document.querySelector('.modal-backdrop.open, .qc-backdrop.open');
+  if (overlay || document.body.classList.contains('nav-open')) {
+    closeAllModals();
+    document.querySelector('.qc-backdrop.open')?.classList.remove('open');
+    document.body.classList.remove('nav-open');
+    if (currentRoute) writeHistory(currentRoute, false); // re-apilar: la vista no cambia
+    return;
+  }
+  const target = routeFromHash();
+  // Hash inválido (tipeado a mano): corregir la URL y quedarse en la vista actual
+  if (!target) { writeHistory(currentRoute || 'today', true); return; }
+  router.go(target, { fromHistory: true });
+});
