@@ -129,6 +129,40 @@ export const api = {
                     body: JSON.stringify({ to }),
                   }).then(json),
 
+  // Vuelos
+  getFlights:    () => fetch('/api/flights').then(json),
+  saveFlightSettings: (data) => fetch('/api/flights/settings', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data),
+                  }).then(json),
+  createFlightWatch: (data) => fetch('/api/flights/watches', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data),
+                  }).then(json),
+  updateFlightWatch: (id, data) => fetch('/api/flights/watches/' + encodeURIComponent(id), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data),
+                  }).then(json),
+  deleteFlightWatch: (id) => fetch('/api/flights/watches/' + encodeURIComponent(id), {
+                    method: 'DELETE',
+                  }).then(json),
+  updateFlightDeal: (id, data) => fetch('/api/flights/deals/' + encodeURIComponent(id), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data),
+                  }).then(json),
+  deleteFlightDeal: (id) => fetch('/api/flights/deals/' + encodeURIComponent(id), {
+                    method: 'DELETE',
+                  }).then(json),
+  sendFlightTestEmail: (to) => fetch('/api/flights/test-email', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ to }),
+                  }).then(json),
+
   // Backup / restore
   exportAll:     () => fetch('/api/export').then(json),
   importAll:     (data) => fetch('/api/import', {
