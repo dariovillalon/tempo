@@ -114,22 +114,59 @@ async function smtpConfig() {
   };
 }
 
-// Manda los mails que Tempo dejó pendientes y le avisa el resultado de cada uno.
+// Diario local de mails ya entregados (data/ está gitignoreado). Se anota apenas
+// Gmail acepta el mail y se borra cuando Tempo confirmó el resultado: si ese aviso
+// falla (Render deployando, corte), la corrida siguiente solo avisa y no reenvía.
+const JOURNAL = path.join(DIR, 'data', 'vuelos-mails-enviados.json');
+const JOURNAL_TTL_MS = 8 * 86400000;
+async function readJournal() {
+  try {
+    const j = JSON.parse(await fs.readFile(JOURNAL, 'utf-8'));
+    const now = Date.now();
+    return Object.fromEntries(Object.entries(j).filter(([, ts]) => now - ts < JOURNAL_TTL_MS));
+  } catch { return {}; }
+}
+async function writeJournal(j) {
+  await fs.mkdir(path.dirname(JOURNAL), { recursive: true });
+  const tmp = JOURNAL + '.tmp';
+  await fs.writeFile(tmp, JSON.stringify(j, null, 2));
+  await fs.rename(tmp, JOURNAL);
+}
+
+// Manda los mails que Tempo dejó pendientes, retira los que ya no corresponden y
+// le avisa a Tempo el resultado de cada uno.
 async function sendPendingMails() {
-  const { mails } = await call('GET', '/api/flights/mail-pending');
-  const out = { sent: 0, failed: [] };
-  if (!mails?.length) return out;
+  const plan = await call('GET', '/api/flights/mail-pending');
+  const out = { sent: 0, failed: [], retired: [], unrecorded: [], paused: !!plan.paused, byId: {} };
+  if (plan.paused) return out;
+  const journal = await readJournal();
   const cfg = await smtpConfig();
-  for (const m of mails) {
+
+  for (const st of plan.stale || []) {
+    try { await call('POST', '/api/flights/mail-result', { id: st.id, ok: false, resolve: true, error: st.reason }); out.retired.push(st); }
+    catch (e) { out.unrecorded.push({ id: st.id, error: e.message }); }
+  }
+
+  for (const m of plan.mails || []) {
     let ok = false, error = null;
-    if (!cfg) error = 'faltan SMTP_USER y SMTP_PASS en el .env de la Mac';
+    if (journal[m.id]) ok = true; // ya salió en una corrida anterior: solo falta avisarle a Tempo
+    else if (!cfg) error = 'faltan SMTP_USER y SMTP_PASS en el .env de la Mac';
     else {
-      try { await smtpSend({ ...cfg, to: m.to, subject: m.subject, text: m.text }); ok = true; }
-      catch (e) { error = e.message; }
+      try {
+        await smtpSend({ ...cfg, to: m.to, subject: m.subject, text: m.text });
+        ok = true;
+        journal[m.id] = Date.now();
+        await writeJournal(journal);
+      } catch (e) { error = e.message; }
     }
+    out.byId[m.id] = { sent: ok, error };
     if (ok) out.sent++; else out.failed.push({ id: m.id, error });
-    try { await call('POST', '/api/flights/mail-result', { id: m.id, ok, error }); }
-    catch (e) { out.failed.push({ id: m.id, error: 'no pude avisarle a Tempo: ' + e.message }); }
+    try {
+      await call('POST', '/api/flights/mail-result', { id: m.id, ok, error });
+      if (journal[m.id]) { delete journal[m.id]; await writeJournal(journal); }
+    } catch (e) {
+      out.unrecorded.push({ id: m.id, error: 'no pude avisarle a Tempo: ' + e.message });
+    }
   }
   return out;
 }
@@ -152,8 +189,11 @@ try {
     // los de corridas anteriores que no salieron). Un fallo acá no invalida el reporte.
     try {
       res.macMail = await sendPendingMails();
-      if (res.alerts?.length && !res.emailed && res.macMail.sent > 0 && !res.macMail.failed.length) res.emailed = true;
-      if (res.macMail.failed.length) res.emailError = res.macMail.failed[0].error;
+      // emailed habla del mail de ESTA corrida, no de reintentos viejos
+      const mine = res.mailId ? res.macMail.byId[res.mailId] : null;
+      if (mine?.sent) { res.emailed = true; res.emailError = null; }
+      else if (mine) res.emailError = mine.error;
+      else if (res.mailId && !res.emailed) res.emailError = res.macMail.paused ? 'avisos pausados' : 'el mail no salió';
     } catch (e) {
       res.macMail = { sent: 0, failed: [{ error: e.message }] };
       if (res.alerts?.length) res.emailError = e.message;
@@ -166,7 +206,7 @@ try {
   } else if (cmd === 'mail-pending') {
     const r = await sendPendingMails();
     console.log(JSON.stringify(r, null, 2));
-    if (r.failed.length) process.exit(4);
+    if (r.failed.length || r.unrecorded.length) process.exit(4);
   } else if (cmd === 'test-mail') {
     const cfg = await smtpConfig();
     if (!cfg) throw fatal('Faltan SMTP_USER y SMTP_PASS en el .env de esta carpeta');

@@ -37,7 +37,11 @@ muestra Google ("suelen valer entre USD X–Y"), o debajo del tope en USD de la 
 Un multidestino no tiene rango de Google: avisa solo si baja de su `maxUsd`. No se repite el aviso
 salvo que baje 3% más o pase una semana, aunque el mail haya fallado (el push ya avisó).
 Mail: lo manda `vuelos-tempo.mjs` desde la Mac al terminar el `report` (y reintenta durante una
-semana los que no salieron). Push: lo manda la tarea con la herramienta PushNotification. "Pausar avisos" en la pestaña frena mail y push, no los chequeos.
+semana los que no salieron). Un mail pendiente solo sale si la oferta sigue siendo "muy buena" a un
+precio no más de 3% arriba del avisado; si no, se retira ("ya no es barato"). Una oferta va en un
+solo mail aunque tenga varios avisos pendientes. Al pausar, los pendientes se retiran.
+`data/vuelos-mails-enviados.json` (local) evita reenviar un mail si Tempo no llegó a anotarlo.
+Push: lo manda la tarea con la herramienta PushNotification. "Pausar avisos" en la pestaña frena mail y push, no los chequeos.
 
 ## Protocolo de la tarea (seguirlo al pie de la letra)
 
@@ -114,7 +118,8 @@ semana los que no salieron). Push: lo manda la tarea con la herramienta PushNoti
    - Salida 3 = el server rechazó ofertas (`rejected`, con el motivo). Corregí esas ofertas y subilas
      en un archivo nuevo. Esas rutas no quedan como chequeadas hasta que llegue una válida.
    - `duplicate: true` = ese mismo archivo ya se había subido; no lo cuentes dos veces.
-   - `macMail` dice cuántos mails salieron desde la Mac (`sent`) y cuáles fallaron (`failed`).
+   - `macMail` dice cuántos mails salieron desde la Mac (`sent`), cuáles fallaron (`failed`) y
+     cuáles se retiraron (`retired`). `emailed` habla solo del mail de esta corrida.
    - Si `alerts` no está vacío, mandar **un** push: "Vuelo barato: <título> USD <precio> (<fechas>).
      Detalle en Tempo › Vuelos." Si `emailed` es false, agregar "(el mail falló)".
    - Si la subida falló (salida 1), push con el error corto. Si no hay alertas, no mandar push.

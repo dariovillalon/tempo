@@ -1821,6 +1821,37 @@ function pendingFlightMails(data, nowTs) {
     && nowTs - l.ts < FLIGHTS_MAIL_RETRY_MS);
 }
 
+// Qué mails pendientes mandar y cuáles retirar. data.log va del más nuevo al más
+// viejo: una oferta va solo en el aviso más nuevo que la incluye (nada de mails
+// repetidos), y solo si sigue siendo "muy buena" a un precio no más de 3% arriba
+// del avisado (nunca "Vuelo barato" con un precio que ya no lo es). Se arma con la
+// oferta vigente (links y precio de hoy). Es solo lectura: los avisos a retirar
+// vuelven en `stale` y el CLI los cierra con mail-result {resolve: true}.
+function planPendingMails(data, nowTs) {
+  const watchById = new Map(data.watches.map(w => [w.id, w]));
+  const covered = new Set();
+  const mails = [], stale = [];
+  for (const l of pendingFlightMails(data, nowTs)) {
+    const id = flightsLogId(l);
+    const fresh = [];
+    let reason = null;
+    for (const x of l.deals) {
+      if (covered.has(x.id)) continue;
+      const d = data.deals.find(dd => dd.id === x.id);
+      if (!d) { reason ||= 'la oferta ya no existe'; continue; }
+      const w = d.watchId ? watchById.get(d.watchId) : null;
+      const still = dealIsGreat(d, w, data.settings.alertPct)
+        && d.priceUsd <= Number(x.priceUsd) * (1 + FLIGHTS_REALERT_DROP);
+      if (!still) { reason ||= 'ya no es barato'; continue; }
+      fresh.push(d);
+    }
+    if (!fresh.length) { stale.push({ id, reason: reason || 'ya salió en un aviso más nuevo' }); continue; }
+    for (const d of fresh) covered.add(d.id);
+    mails.push({ id, ...buildFlightsEmail(l.to, fresh) });
+  }
+  return { mails, stale };
+}
+
 function dueWatches(data, nowTs) {
   return data.watches.filter(w => w.active && (
     !w.lastCheckedAt || (nowTs - w.lastCheckedAt) >= (w.everyDays || 2) * 86400000 - 3 * 3600000
@@ -1940,6 +1971,7 @@ async function applyFlightsReport(body) {
       })),
       emailed, emailError,
       mailPending: alertDeals.length > 0 && !emailed,
+      mailId: alertDeals.length ? data.log[0].id : null,
     };
     data.runs.unshift({
       ts: nowTs,
@@ -2829,7 +2861,15 @@ async function handleApi(req, res, parsedUrl) {
           if (!Number.isFinite(p) || p < 0 || p > 80) throw new Error('Porcentaje inválido (0 a 80)');
           data.settings.alertPct = p;
         }
-        if (body.paused !== undefined) data.settings.paused = !!body.paused;
+        if (body.paused !== undefined) {
+          // Al pausar se retiran los mails pendientes: al despausar no salen avisos viejos
+          if (body.paused && !data.settings.paused) {
+            for (const l of pendingFlightMails(data, Date.now())) {
+              Object.assign(l, { pending: false, resolved: true, error: 'avisos pausados' });
+            }
+          }
+          data.settings.paused = !!body.paused;
+        }
         if (body.mailVia !== undefined) {
           if (!['mac', 'server'].includes(body.mailVia)) throw new Error('mailVia tiene que ser "mac" o "server"');
           data.settings.mailVia = body.mailVia;
@@ -2938,12 +2978,8 @@ async function handleApi(req, res, parsedUrl) {
 
   if (pathname === '/api/flights/mail-pending' && req.method === 'GET') {
     const data = await readFlights();
-    const mails = pendingFlightMails(data, Date.now()).map(l => {
-      // Se arma con la oferta vigente (precio y links de hoy), no con la copia del log
-      const deals = l.deals.map(x => data.deals.find(d => d.id === x.id)).filter(Boolean);
-      return deals.length ? { id: flightsLogId(l), ...buildFlightsEmail(l.to, deals) } : null;
-    }).filter(Boolean);
-    return sendJSON(res, 200, { mails });
+    if (data.settings.paused) return sendJSON(res, 200, { mails: [], stale: [], paused: true });
+    return sendJSON(res, 200, planPendingMails(data, Date.now()));
   }
 
   if (pathname === '/api/flights/mail-result' && req.method === 'POST') {
@@ -2955,11 +2991,14 @@ async function handleApi(req, res, parsedUrl) {
         const data = await readFlights();
         const l = data.log.find(x => flightsLogId(x) === id);
         if (!l) return null;
-        if (l.ok) return { ok: true, already: true }; // reintento del POST: no contar dos veces
+        if (l.ok || (l.resolved && body.ok !== true)) return { ok: true, already: true }; // reintento del POST: no contar dos veces
         const nowTs = Date.now();
         l.id = id;
         l.via = 'mac';
-        if (body.ok === true) {
+        if (body.ok !== true && body.resolve === true) {
+          // Aviso retirado (ya no es barato, oferta borrada, repetido): no se manda
+          Object.assign(l, { pending: false, resolved: true, error: fStr(body.error, 300) || 'retirado' });
+        } else if (body.ok === true) {
           Object.assign(l, { ok: true, error: null, pending: false, resolved: true, sentAt: nowTs });
           data.stats.mailsSent += 1;
           const ids = new Set(l.deals.map(x => x.id));
