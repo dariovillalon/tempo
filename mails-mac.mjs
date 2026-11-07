@@ -17,9 +17,10 @@ let exit = 0;
 for (const [name, api] of [['BTC', '/api/btc'], ['Vuelos', '/api/flights']]) {
   try {
     const r = await sendPendingMails(api);
-    const happened = r.sent || r.failed.length || r.retired.length || r.unrecorded.length || r.skipped;
+    const happened = r.sent || r.reacked || r.failed.length || r.retired.length || r.unrecorded.length || r.skipped;
     if (happened) {
       console.log(`${stamp()} ${name}: enviados ${r.sent}, fallidos ${r.failed.length}, retirados ${r.retired.length}`
+        + (r.reacked ? `, ya enviados antes (solo anotados) ${r.reacked}` : '')
         + (r.unrecorded.length ? `, sin anotar en Tempo ${r.unrecorded.length}` : '')
         + (r.skipped ? ` (${r.skipped})` : '')
         + (r.failed.length ? ` · ${r.failed[0].error}` : ''));

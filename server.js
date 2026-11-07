@@ -1345,7 +1345,9 @@ function withBtcLock(fn) {
   return run;
 }
 const BTC_MAIL_TTL_MS = 24 * 3600 * 1000; // una alerta de precio de hace más de un día ya no sirve
-const btcMailId = (now) => 'b_' + now.toString(36) + Math.random().toString(36).slice(2, 5);
+// Único de verdad: alimenta el log y la clave del diario de la Mac (un id repetido
+// dejaría un mail reenviándose cada 5 min).
+const btcMailId = () => 'b_' + crypto.randomUUID().replace(/-/g, '').slice(0, 20);
 
 async function readBtcAlertsFile() {
   try {
@@ -1489,7 +1491,7 @@ async function runBtcAlertCheck({ force = false } = {}) {
       alert.triggerCount = (alert.triggerCount || 0) + 1;
       alert.armed = false;
       data.log.unshift({
-        id: btcMailId(now), ts: now, alertId: alert.id, price: snapshot.price,
+        id: btcMailId(), ts: now, alertId: alert.id, price: snapshot.price,
         target: alert.target, direction: alert.direction, email: alert.email,
         ok: false, pending: true, via: 'mac',
         mail: buildBtcAlertEmail({ to: alert.email, alert, snapshot }),
@@ -2717,7 +2719,6 @@ async function handleApi(req, res, parsedUrl) {
       const cooldownHours = Number.isFinite(Number(body.cooldownHours))
         ? Math.max(0.25, Number(body.cooldownHours))
         : BTC_DEFAULT_COOLDOWN_H;
-      const data = await readBtcAlerts();
       const alert = {
         id: newAlertId(),
         target,
@@ -2733,8 +2734,12 @@ async function handleApi(req, res, parsedUrl) {
         triggerCount: 0,
         armed: true, // histéresis: se desarma al disparar y re-arma al alejarse el precio
       };
-      data.alerts.push(alert);
-      await writeBtcAlerts(data);
+      // Con lock: el scheduler y los resultados de la Mac escriben la misma fila
+      await withBtcLock(async () => {
+        const data = await readBtcAlerts();
+        data.alerts.push(alert);
+        await writeBtcAlerts(data);
+      });
       return sendJSON(res, 200, { ok: true, alert });
     } catch (e) {
       return sendJSON(res, 400, { error: e.message });
@@ -2742,27 +2747,36 @@ async function handleApi(req, res, parsedUrl) {
   }
 
   const btcAlertMatch = pathname.match(/^\/api\/btc\/alerts\/([a-z0-9_]+)$/i);
-  if (btcAlertMatch) {
+  if (btcAlertMatch && (req.method === 'PUT' || req.method === 'DELETE')) {
     const id = btcAlertMatch[1];
-    const data = await readBtcAlerts();
-    const idx = data.alerts.findIndex(a => a.id === id);
-    if (idx < 0) return sendJSON(res, 404, { error: 'Alerta no encontrada' });
-
-    if (req.method === 'PUT') {
-      try {
-        const body = await readBody(req);
-        const a = data.alerts[idx];
+    try {
+      // Validar el body afuera; leer-modificar-escribir adentro del lock (el
+      // scheduler y /mail-result escriben la misma fila: sin lock se pisan).
+      const body = req.method === 'PUT' ? await readBody(req) : null;
+      if (body) {
         if (body.target !== undefined) {
           const t = Number(body.target);
           if (!Number.isFinite(t) || t <= 0) return sendJSON(res, 400, { error: 'Precio inválido' });
-          a.target = t;
+        }
+        if (body.email !== undefined && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((body.email || '').trim())) {
+          return sendJSON(res, 400, { error: 'Email inválido' });
+        }
+      }
+      const result = await withBtcLock(async () => {
+        const data = await readBtcAlerts();
+        const idx = data.alerts.findIndex(a => a.id === id);
+        if (idx < 0) return null;
+        if (req.method === 'DELETE') {
+          data.alerts.splice(idx, 1);
+          await writeBtcAlerts(data);
+          return { ok: true };
+        }
+        const a = data.alerts[idx];
+        if (body.target !== undefined) {
+          a.target = Number(body.target);
           a.armed = true; // el latch refería al target viejo
         }
-        if (body.email !== undefined) {
-          const e = (body.email || '').trim();
-          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return sendJSON(res, 400, { error: 'Email inválido' });
-          a.email = e;
-        }
+        if (body.email !== undefined) a.email = (body.email || '').trim();
         if (body.direction !== undefined) {
           a.direction = body.direction === 'above' ? 'above' : 'below';
           a.armed = true; // el latch refería a la dirección vieja
@@ -2780,16 +2794,12 @@ async function handleApi(req, res, parsedUrl) {
         }
         a.updatedAt = Date.now();
         await writeBtcAlerts(data);
-        return sendJSON(res, 200, { ok: true, alert: a });
-      } catch (e) {
-        return sendJSON(res, 400, { error: e.message });
-      }
-    }
-
-    if (req.method === 'DELETE') {
-      data.alerts.splice(idx, 1);
-      await writeBtcAlerts(data);
-      return sendJSON(res, 200, { ok: true });
+        return { ok: true, alert: a };
+      });
+      if (!result) return sendJSON(res, 404, { error: 'Alerta no encontrada' });
+      return sendJSON(res, 200, result);
+    } catch (e) {
+      return sendJSON(res, 400, { error: e.message });
     }
   }
 
@@ -2821,7 +2831,7 @@ async function handleApi(req, res, parsedUrl) {
       if (!id) return sendJSON(res, 400, { error: 'Falta id' });
       const result = await withBtcLock(async () => {
         const data = await readBtcAlerts();
-        const l = data.log.find(x => x.id === id);
+        const l = data.log.find(x => x.id === id && !x.ok && !x.resolved) || data.log.find(x => x.id === id);
         if (!l) return null;
         if (l.ok || (l.resolved && body.ok !== true)) return { ok: true, already: true };
         const err = typeof body.error === 'string' ? body.error.slice(0, 300) : null;
@@ -2855,7 +2865,7 @@ async function handleApi(req, res, parsedUrl) {
         if (data.mailVia !== 'mac') return false;
         const now = Date.now();
         data.log.unshift({
-          id: btcMailId(now), ts: now, type: 'test', price: snapshot.price, target: snapshot.price,
+          id: btcMailId(), ts: now, type: 'test', price: snapshot.price, target: snapshot.price,
           direction: 'below', email: to, ok: false, pending: true, via: 'mac',
           mail: buildBtcAlertEmail({ to, alert: testAlert, snapshot }),
         });
