@@ -38,6 +38,12 @@ pesajes con OCR de Zepp, pomodoro, agenda, cuentas, notas del vault de Obsidian)
 - El loader ignora `PORT`/`HOST` a propósito (cambiarían el bind a 0.0.0.0 desde un archivo).
 - Modo nube (`DATABASE_URL` seteada) **exige** `TEMPO_PASSWORD` o el server no arranca.
 - En Render las variables van por dashboard (Environment): DATABASE_URL, TEMPO_PASSWORD, SMTP_*.
+- **Mails:** Render gratis bloquea SMTP (25/465/587) desde sep-2025. En la nube, BTC Alerts y Vuelos
+  dejan el mail armado como pendiente (`mailVia: 'mac'`) y lo manda la Mac con Gmail:
+  `mails-mac.mjs` (LaunchAgent `com.dario.tempo-mails`, cada 5 min, log `~/Library/Logs/tempo-mails.log`)
+  y `vuelos-tempo.mjs report`. Código compartido en `lib/tempo-cli.mjs` y `lib/smtp.mjs`.
+  Endpoints `/api/{btc,flights}/mail-pending` y `/mail-result`. En local (sin DATABASE_URL) BTC manda
+  por SMTP desde el server como siempre.
 
 ## Backups
 

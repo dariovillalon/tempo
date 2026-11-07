@@ -19,8 +19,9 @@ Tarea 9:00 (Mac) ──► node vuelos-tempo.mjs due ──► rutas que tocan h
 ```
 
 Render gratis bloquea los puertos SMTP (25/465/587) desde el 26-sep-2025, por eso el mail lo
-manda la Mac con `SMTP_USER`/`SMTP_PASS` del `.env`. Si algún día Render pasa a pago, en la
-pestaña se puede cambiar "Quién manda el mail" a "El server".
+manda la Mac con `SMTP_USER`/`SMTP_PASS` del `.env`: al terminar el `report` y, además,
+`mails-mac.mjs` cada 5 minutos (LaunchAgent `com.dario.tempo-mails`, el mismo que manda los de BTC).
+Si algún día Render pasa a pago, en la pestaña se puede cambiar "Quién manda el mail" a "El server".
 
 | Pieza | Lee de | Escribe en | Para qué |
 |---|---|---|---|
@@ -40,7 +41,8 @@ Mail: lo manda `vuelos-tempo.mjs` desde la Mac al terminar el `report` (y reinte
 semana los que no salieron). Un mail pendiente solo sale si la oferta sigue siendo "muy buena" a un
 precio no más de 3% arriba del avisado; si no, se retira ("ya no es barato"). Una oferta va en un
 solo mail aunque tenga varios avisos pendientes. Al pausar, los pendientes se retiran.
-`data/vuelos-mails-enviados.json` (local) evita reenviar un mail si Tempo no llegó a anotarlo.
+`data/mails-enviados.json` (local) evita reenviar un mail si Tempo no llegó a anotarlo, y un candado
+(`data/.mails-lock`) evita que launchd y la tarea manden el mismo mail a la vez.
 Push: lo manda la tarea con la herramienta PushNotification. "Pausar avisos" en la pestaña frena mail y push, no los chequeos.
 
 ## Protocolo de la tarea (seguirlo al pie de la letra)
@@ -127,6 +129,7 @@ Push: lo manda la tarea con la herramienta PushNotification. "Pausar avisos" en 
 ## Mails a mano
 
 - `node vuelos-tempo.mjs mail-pending`: reintenta los mails de alerta que no salieron.
+- `node mails-mac.mjs`: lo mismo para BTC y Vuelos juntos (es lo que corre launchd).
 - `node vuelos-tempo.mjs test-mail`: manda un mail de prueba desde la Mac al mail de la pestaña.
 
 ## Probar sin tocar la nube
