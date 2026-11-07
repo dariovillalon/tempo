@@ -10,7 +10,7 @@ import { escapeHtml, sanitizeUrl, relTime } from '../utils.js';
 import { toast } from '../components/toast.js';
 
 const STALE_MS = 72 * 3600 * 1000;      // un precio de hace más de 3 días ya no es confiable
-const REFETCH_MS = 60 * 1000;
+const REFETCH_MS = 15 * 1000; // al entrar a la vista, datos de hace más de 15 s se piden de nuevo
 const ORIGINS = [
   ['BUE', 'Buenos Aires (EZE + AEP)'], ['EZE', 'Ezeiza'], ['AEP', 'Aeroparque'],
   ['COR', 'Córdoba'], ['ROS', 'Rosario'], ['MDZ', 'Mendoza'],
@@ -153,7 +153,7 @@ const paint = (root) => {
     ${deals.length === 0 ? `<div class="fl-empty">Todavía no hay ofertas validadas. Aparecen después del primer chequeo.</div>` : ''}
     ${deals.length > 0 && shown.length === 0 ? `<div class="fl-empty">Ninguna oferta cumple el filtro.</div>` : ''}
     ${groups.map(([key, title, note, test]) => {
-      const list = shown.filter(test);
+      const list = shown.filter(test).sort((a, b) => a.priceUsd - b.priceUsd);
       if (!list.length) return '';
       return `<section class="fl-group fl-group-${key}">
         <h3>${title} <span class="muted">(${list.length})</span></h3>
@@ -221,8 +221,10 @@ const renderDeal = (d) => {
   const stale = age > STALE_MS;
   const pct = pctBelow(d);
   const [vLabel, vKind] = d.great
-    ? [`Muy buena${pct > 0 ? ` · −${pct}%` : ''}`, 'great']
-    : (VERDICT[d.verdict] || VERDICT['sin-ref']);
+    ? [d.kind === 'multi' ? 'Muy buena · bajo tu tope' : `Muy buena${pct > 0 ? ` · −${pct}%` : ''}`, 'great']
+    : d.kind === 'multi'
+      ? [d.maxUsd ? `Arriba de tu tope (USD ${fmtNum(d.maxUsd)})` : 'Sin tope de aviso', 'flat']
+      : (VERDICT[d.verdict] || VERDICT['sin-ref']);
   const tags = [
     d.validated ? `<span class="fl-tag ${stale ? 'warn' : 'ok'}">${stale ? `Precio de hace ${Math.floor(age / 86400000)} días` : `Validado en ${escapeHtml(d.seller || 'el vendedor')} · hace ${relTime(d.validatedAt)}`}</span>` : '<span class="fl-tag warn">Sin validar</span>',
     d.beach ? '<span class="fl-tag sea">Playa</span>' : '',
@@ -245,7 +247,7 @@ const renderDeal = (d) => {
       <div class="fl-meta">${airline ? `<span><span class="muted">Aerolínea</span> ${escapeHtml(airline)}</span>` : ''}${dates}</div>
       <div class="fl-tags">${tags}</div>
       ${d.kind === 'multi' ? renderLegs(legs) : ''}
-      ${d.normal ? renderBar(d) : `<p class="fl-small muted">${escapeHtml(d.googleNote || 'Google no dio rango normal para estas fechas.')}</p>`}
+      ${d.normal ? renderBar(d) : (d.kind === 'multi' ? '' : `<p class="fl-small muted">${escapeHtml(d.googleNote || 'Google no dio rango normal para estas fechas.')}</p>`)}
       ${hist && hist.length > 1 ? renderSpark(hist) : ''}
       ${d.kind === 'multi' && d.maxUsd ? `<p class="fl-small muted">Te aviso si baja de USD ${fmtNum(d.maxUsd)}.</p>` : ''}
       ${d.notes?.length ? `<ul class="fl-notes">${d.notes.map(n => `<li>${escapeHtml(n)}</li>`).join('')}</ul>` : ''}
@@ -257,6 +259,7 @@ const renderDeal = (d) => {
       <span class="fl-verdict ${vKind}">${escapeHtml(vLabel)}</span>
       <div class="fl-links">
         ${(d.links || []).map(l => { const u = sanitizeUrl(l.url); return u ? `<a href="${escapeHtml(u)}" target="_blank" rel="noopener">${escapeHtml(l.label)} ↗</a>` : ''; }).join('')}
+        ${d.kind === 'multi' ? `<button class="fl-linkbtn" type="button" data-act="cap-deal" data-id="${escapeHtml(d.id)}">${d.maxUsd ? 'Cambiar tope' : 'Ponerle tope'}</button>` : ''}
         <button class="fl-linkbtn" type="button" data-act="del-deal" data-id="${escapeHtml(d.id)}">Quitar</button>
       </div>
     </div>
@@ -399,6 +402,16 @@ const wire = (root) => {
           await api.deleteFlightWatch(id);
           await reloadAndPaint(root);
           toast(`Dejé de seguir ${w ? `${w.origin} → ${w.dest}` : 'la ruta'}`);
+        }
+        else if (act === 'cap-deal') {
+          const d = cache.deals.find(x => x.id === id);
+          const raw = prompt('Avisarme si este multidestino baja de (USD). Vacío = sin aviso.', d?.maxUsd ?? '');
+          if (raw === null) return;
+          const v = raw.trim().replace(',', '.');
+          if (v !== '' && !(Number(v) > 0)) { toast('Poné un número en USD, ej. 680', 'error'); return; }
+          await api.updateFlightDeal(id, { maxUsd: v === '' ? null : Number(v) });
+          await reloadAndPaint(root);
+          toast(v === '' ? 'Sin aviso para este multidestino' : `Te aviso si baja de USD ${fmtNum(Number(v))}`, 'success');
         }
         else if (act === 'del-deal') {
           await api.deleteFlightDeal(id);

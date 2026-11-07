@@ -2983,6 +2983,28 @@ async function handleApi(req, res, parsedUrl) {
   }
 
   const flightDealMatch = pathname.match(/^\/api\/flights\/deals\/([a-z0-9_-]+)$/i);
+  if (flightDealMatch && req.method === 'PUT') {
+    // Solo el tope de aviso (maxUsd): el resto de la oferta lo escribe la tarea
+    const id = flightDealMatch[1];
+    try {
+      const body = await readBody(req);
+      if (body.maxUsd === undefined) return sendJSON(res, 400, { error: 'Falta maxUsd' });
+      const maxUsd = body.maxUsd === null || body.maxUsd === '' ? null : fNum(body.maxUsd);
+      if (body.maxUsd !== null && body.maxUsd !== '' && !maxUsd) return sendJSON(res, 400, { error: 'Tope inválido' });
+      const deal = await withFlightsLock(async () => {
+        const data = await readFlights();
+        const d = data.deals.find(x => x.id === id);
+        if (!d) return null;
+        d.maxUsd = maxUsd;
+        await writeFlights(data);
+        return d;
+      });
+      if (!deal) return sendJSON(res, 404, { error: 'Oferta no encontrada' });
+      return sendJSON(res, 200, { ok: true, deal });
+    } catch (e) {
+      return sendJSON(res, 400, { error: e.message });
+    }
+  }
   if (flightDealMatch && req.method === 'DELETE') {
     const id = flightDealMatch[1];
     const found = await withFlightsLock(async () => {

@@ -37,7 +37,8 @@ herramienta PushNotification. "Pausar avisos" en la pestaña frena mail y push, 
 1. Correr `node vuelos-tempo.mjs due` en esta carpeta. Si falla, mandar push "Chequeo de vuelos:
    no pude leer Tempo (<error>)" y terminar.
 2. Tomar como máximo **4 rutas** de `due` (las que hace más que no se chequean primero). Los
-   lunes, además, revalidar las ofertas `multi` (mismos tramos y fechas).
+   lunes, además, revalidar hasta **3 ofertas `multi`** de `due.multi` (las de `validatedAt` más
+   viejo primero), con los mismos tramos y fechas, en la página de cada vendedor.
 3. Por cada ruta (`origin`, `dest`, `window`, `nights`):
    - Abrir Google Flights con
      `https://www.google.com/travel/flights?q=Flights%20from%20<ORIG>%20to%20<DEST>%20on%20<IDA>%20through%20<VUELTA>&curr=USD&hl=es-419&gl=AR`

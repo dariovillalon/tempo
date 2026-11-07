@@ -149,6 +149,11 @@ export const api = {
   deleteFlightWatch: (id) => fetch('/api/flights/watches/' + encodeURIComponent(id), {
                     method: 'DELETE',
                   }).then(json),
+  updateFlightDeal: (id, data) => fetch('/api/flights/deals/' + encodeURIComponent(id), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data),
+                  }).then(json),
   deleteFlightDeal: (id) => fetch('/api/flights/deals/' + encodeURIComponent(id), {
                     method: 'DELETE',
                   }).then(json),
