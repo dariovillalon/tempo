@@ -1,7 +1,7 @@
 // btcAlerts.js — alertas de precio de BTC con notificación por email
 //
 // La vista deja crear/editar/borrar alertas. El backend consulta CoinGecko
-// cada 10 minutos y dispara un email SMTP cuando el precio cumple la
+// cada 10 minutos y dispara un email (desde la Mac en la nube, ver mails-mac.mjs) cuando el precio cumple la
 // condición. Cooldown configurable por alerta (default 6h) para evitar
 // spam mientras la condición se mantenga.
 
@@ -79,7 +79,7 @@ const paint = (root) => {
       <div>
         <h2 style="margin-bottom:2px">BTC Alerts</h2>
         <div style="font-size:11.5px;color:var(--text-3)">
-          Chequeo cada ${intervalMin} min · CoinGecko · email vía Gmail SMTP
+          Chequeo cada ${intervalMin} min · CoinGecko · ${cache.mailVia === 'mac' ? 'el mail lo manda la Mac (cada 5 min)' : 'email vía Gmail SMTP'}
         </div>
       </div>
       <div class="view-h-actions">
@@ -244,14 +244,17 @@ const renderLog = () => {
   }
   return log.slice(0, 25).map(ev => {
     const arrow = ev.direction === 'above' ? '↑' : '↓';
+    const pending = !ev.ok && ev.pending && !ev.resolved;
     const status = ev.ok
-      ? `<span class="btc-pill on">enviado</span>`
-      : `<span class="btc-pill err" title="${escapeHtml(ev.error || '')}">falló</span>`;
+      ? `<span class="btc-pill on">${ev.via === 'mac' ? 'enviado desde la Mac' : 'enviado'}</span>`
+      : pending
+        ? `<span class="btc-pill" title="${escapeHtml(ev.error || 'Lo manda la Mac en los próximos minutos')}">pendiente (Mac)</span>`
+        : `<span class="btc-pill err" title="${escapeHtml(ev.error || '')}">${ev.resolved ? 'no enviado' : 'falló'}</span>`;
     return `
       <div class="btc-log-row">
         <div class="btc-log-time">${relTime(ev.ts)}</div>
         <div class="btc-log-main">
-          <strong>${arrow} ${fmtPrice(ev.price)}</strong>
+          <strong>${ev.type === 'test' ? 'Prueba · ' : ''}${arrow} ${fmtPrice(ev.price)}</strong>
           <span class="muted">objetivo ${fmtPrice(ev.target)} → ${escapeHtml(ev.email)}</span>
         </div>
         <div>${status}</div>
@@ -341,8 +344,10 @@ const handleAction = async (_e, root, id, act, card) => {
       break;
     case 'test':
       try {
-        await api.sendBtcTestEmail(alert.email);
-        toast('Email de prueba enviado a ' + alert.email, 'success');
+        const r = await api.sendBtcTestEmail(alert.email);
+        toast(r?.queued
+          ? 'Mail de prueba en cola: la Mac lo manda en hasta 5 minutos'
+          : 'Email de prueba enviado a ' + alert.email, 'success');
       } catch (e) { toast('Falló: ' + e.message, 'error'); }
       break;
     case 'del':

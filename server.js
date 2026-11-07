@@ -1327,10 +1327,25 @@ const SMTP_BACKOFF_MAX_MS = 6 * 3600 * 1000; // tope del backoff exponencial: 6 
 
 const BTC_LOG_MAX = 200; // tope del log persistido (newest-first) para que la fila kv no crezca sin límite
 
+// mailVia 'mac': Render gratis bloquea SMTP, así que la alerta deja el mail armado
+// como pendiente y lo manda la Mac (mails-mac.mjs, launchd cada 5 min). En local,
+// sin DATABASE_URL, el default sigue siendo mandar por SMTP desde el server.
+const btcDefaultMailVia = () => (DATABASE_URL ? 'mac' : 'server');
 function normalizeBtcAlerts(data) {
-  if (!data || !Array.isArray(data.alerts)) return { alerts: [], log: [] };
-  return { alerts: data.alerts, log: Array.isArray(data.log) ? data.log : [] };
+  const mailVia = data?.mailVia === 'mac' || data?.mailVia === 'server' ? data.mailVia : btcDefaultMailVia();
+  if (!data || !Array.isArray(data.alerts)) return { alerts: [], log: [], mailVia };
+  return { alerts: data.alerts, log: Array.isArray(data.log) ? data.log : [], mailVia };
 }
+
+// Serializa read-modify-write de la fila 'btc-alerts' (scheduler + resultados de la Mac)
+let btcChain = Promise.resolve();
+function withBtcLock(fn) {
+  const run = btcChain.then(fn, fn);
+  btcChain = run.catch(() => {});
+  return run;
+}
+const BTC_MAIL_TTL_MS = 24 * 3600 * 1000; // una alerta de precio de hace más de un día ya no sirve
+const btcMailId = (now) => 'b_' + now.toString(36) + Math.random().toString(36).slice(2, 5);
 
 async function readBtcAlertsFile() {
   try {
@@ -1394,13 +1409,7 @@ async function fetchBtcPrice() {
 
 // Cliente SMTP mínimo (TLS implícito, puerto 465): lib/smtp.mjs, compartido con vuelos-tempo.mjs.
 
-async function sendBtcAlertEmail({ to, alert, snapshot }) {
-  const user = process.env.SMTP_USER || '';
-  const pass = process.env.SMTP_PASS || '';
-  const fromAddr = process.env.SMTP_FROM || user;
-  if (!user || !pass) {
-    throw new Error('SMTP_USER y SMTP_PASS no configurados (App Password de Gmail)');
-  }
+function buildBtcAlertEmail({ to, alert, snapshot }) {
   const direction = alert.direction === 'above' ? 'subió a' : 'cayó a';
   const subject = `BTC ${direction} $${snapshot.price.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
   const lines = [
@@ -1416,15 +1425,18 @@ async function sendBtcAlertEmail({ to, alert, snapshot }) {
     ``,
     `— Tempo · BTC Alerts`,
   ].filter(Boolean);
+  return { to, subject, text: lines.join('\n') };
+}
+
+async function sendBtcAlertEmail({ to, alert, snapshot }) {
+  const user = process.env.SMTP_USER || '';
+  const pass = process.env.SMTP_PASS || '';
+  if (!user || !pass) throw new Error('SMTP_USER y SMTP_PASS no configurados (App Password de Gmail)');
+  const mail = buildBtcAlertEmail({ to, alert, snapshot });
   return smtpSend({
-    host: 'smtp.gmail.com',
-    port: 465,
-    user,
-    pass,
-    from: { address: fromAddr, name: 'Tempo BTC Alerts' },
-    to,
-    subject,
-    text: lines.join('\n'),
+    host: 'smtp.gmail.com', port: 465, user, pass,
+    from: { address: process.env.SMTP_FROM || user, name: 'Tempo BTC Alerts' },
+    to: mail.to, subject: mail.subject, text: mail.text,
   });
 }
 
@@ -1447,6 +1459,7 @@ async function runBtcAlertCheck({ force = false } = {}) {
     return { ok: false, reason: e.message };
   }
 
+  return withBtcLock(async () => {
   const data = await readBtcAlerts();
   if (!data.log) data.log = [];
   let changed = false;
@@ -1469,6 +1482,22 @@ async function runBtcAlertCheck({ force = false } = {}) {
     const cooldownMs = (alert.cooldownHours ?? BTC_DEFAULT_COOLDOWN_H) * 3600 * 1000;
     const since = alert.lastTriggeredAt ? (now - alert.lastTriggeredAt) : Infinity;
     if (!force && since < cooldownMs) continue;
+    if (data.mailVia === 'mac') {
+      // El mail queda armado (con el precio de este momento) y lo manda la Mac
+      alert.lastTriggeredAt = now;
+      alert.lastTriggerPrice = snapshot.price;
+      alert.triggerCount = (alert.triggerCount || 0) + 1;
+      alert.armed = false;
+      data.log.unshift({
+        id: btcMailId(now), ts: now, alertId: alert.id, price: snapshot.price,
+        target: alert.target, direction: alert.direction, email: alert.email,
+        ok: false, pending: true, via: 'mac',
+        mail: buildBtcAlertEmail({ to: alert.email, alert, snapshot }),
+      });
+      fired.push(alert.id);
+      changed = true;
+      continue;
+    }
     // Backoff exponencial por fallos SMTP consecutivos (Date.now() y no `now`:
     // el primer fallo del ciclo suprime los envíos restantes del mismo ciclo).
     if (!force && Date.now() < smtpBackoffUntil) continue;
@@ -1507,7 +1536,8 @@ async function runBtcAlertCheck({ force = false } = {}) {
 
   if (data.log.length > 100) data.log.length = 100;
   if (changed) await writeBtcAlerts(data);
-  return { ok: true, snapshot, fired, smtpBackoffUntil: smtpBackoffUntil || null };
+  return { ok: true, snapshot, fired, smtpBackoffUntil: smtpBackoffUntil || null, mailVia: data.mailVia };
+  });
 }
 
 // ============================================================
@@ -1847,7 +1877,7 @@ function planPendingMails(data, nowTs) {
     }
     if (!fresh.length) { stale.push({ id, reason: reason || 'ya salió en un aviso más nuevo' }); continue; }
     for (const d of fresh) covered.add(d.id);
-    mails.push({ id, ...buildFlightsEmail(l.to, fresh) });
+    mails.push({ id, fromName: 'Tempo Vuelos', ...buildFlightsEmail(l.to, fresh) });
   }
   return { mails, stale };
 }
@@ -2664,8 +2694,9 @@ async function handleApi(req, res, parsedUrl) {
       alerts: data.alerts,
       log: (data.log || []).slice(0, 25),
       snapshot: lastBtcSnapshot,
-      mailConfigured: !!(process.env.SMTP_USER && process.env.SMTP_PASS),
-      mailProvider: 'gmail-smtp',
+      mailConfigured: data.mailVia === 'mac' || !!(process.env.SMTP_USER && process.env.SMTP_PASS),
+      mailProvider: data.mailVia === 'mac' ? 'mac' : 'gmail-smtp',
+      mailVia: data.mailVia,
       mailFrom: process.env.SMTP_FROM || process.env.SMTP_USER || '',
       checkIntervalMs: BTC_CHECK_INTERVAL_MS,
     });
@@ -2773,6 +2804,40 @@ async function handleApi(req, res, parsedUrl) {
     }
   }
 
+  if (pathname === '/api/btc/mail-pending' && req.method === 'GET') {
+    const data = await readBtcAlerts();
+    const nowTs = Date.now();
+    const pend = data.log.filter(l => !l.ok && !l.resolved && l.pending && l.mail);
+    return sendJSON(res, 200, {
+      mails: pend.filter(l => nowTs - l.ts < BTC_MAIL_TTL_MS).map(l => ({ id: l.id, fromName: 'Tempo BTC Alerts', ...l.mail })),
+      stale: pend.filter(l => nowTs - l.ts >= BTC_MAIL_TTL_MS).map(l => ({ id: l.id, reason: 'vencido: la alerta tiene más de 24 h' })),
+    });
+  }
+
+  if (pathname === '/api/btc/mail-result' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const id = typeof body.id === 'string' ? body.id.slice(0, 40) : '';
+      if (!id) return sendJSON(res, 400, { error: 'Falta id' });
+      const result = await withBtcLock(async () => {
+        const data = await readBtcAlerts();
+        const l = data.log.find(x => x.id === id);
+        if (!l) return null;
+        if (l.ok || (l.resolved && body.ok !== true)) return { ok: true, already: true };
+        const err = typeof body.error === 'string' ? body.error.slice(0, 300) : null;
+        if (body.ok === true) Object.assign(l, { ok: true, error: null, pending: false, resolved: true, sentAt: Date.now() });
+        else if (body.resolve === true) Object.assign(l, { pending: false, resolved: true, error: err || 'retirado' });
+        else l.error = err || 'falló el envío desde la Mac';
+        await writeBtcAlerts(data);
+        return { ok: true };
+      });
+      if (!result) return sendJSON(res, 404, { error: 'Mail no encontrado' });
+      return sendJSON(res, 200, result);
+    } catch (e) {
+      return sendJSON(res, 400, { error: e.message });
+    }
+  }
+
   if (pathname === '/api/btc/test-email' && req.method === 'POST') {
     // Enviar un email de prueba para validar SMTP
     try {
@@ -2784,6 +2849,20 @@ async function handleApi(req, res, parsedUrl) {
       let snapshot = lastBtcSnapshot;
       try { snapshot = await fetchBtcPrice(); lastBtcSnapshot = snapshot; }
       catch { snapshot = snapshot || { price: 0, change24h: null, fetchedAt: Date.now() }; }
+      const testAlert = { direction: 'below', target: snapshot.price, note: 'Email de prueba — verifica que el envío funciona.' };
+      const queued = await withBtcLock(async () => {
+        const data = await readBtcAlerts();
+        if (data.mailVia !== 'mac') return false;
+        const now = Date.now();
+        data.log.unshift({
+          id: btcMailId(now), ts: now, type: 'test', price: snapshot.price, target: snapshot.price,
+          direction: 'below', email: to, ok: false, pending: true, via: 'mac',
+          mail: buildBtcAlertEmail({ to, alert: testAlert, snapshot }),
+        });
+        await writeBtcAlerts(data);
+        return true;
+      });
+      if (queued) return sendJSON(res, 200, { ok: true, queued: true });
       await sendBtcAlertEmail({
         to,
         alert: { direction: 'below', target: snapshot.price, note: 'Email de prueba — verifica que SMTP funciona.' },
