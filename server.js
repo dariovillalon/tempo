@@ -1631,6 +1631,422 @@ async function runBtcAlertCheck({ force = false } = {}) {
 }
 
 // ============================================================
+// Vuelos: ofertas validadas + alertas por email
+// ------------------------------------------------------------
+// El server NO busca precios. Los valida una tarea diaria de Claude en la Mac
+// de Dario (Chrome, hasta la página de pago del vendedor) y los manda con
+// POST /api/flights/report (ver VUELOS-ALERTAS.md y vuelos-tempo.mjs).
+// Acá se guardan, se arma el historial y se manda el mail cuando una oferta
+// es "muy buena" (precio validado X% debajo del piso del rango normal de
+// Google, o debajo del tope en USD del seguimiento).
+// Persistencia: data/flights.json local; fila kv 'flights' en la nube.
+// Este proceso es el único escritor de esa fila y serializa sus escrituras
+// con withFlightsLock (Render corre una sola instancia).
+// ============================================================
+
+const FLIGHTS_FILE = path.join(DATA_DIR, 'flights.json');
+const FLIGHTS_HISTORY_MAX = 120;  // puntos por seguimiento
+const FLIGHTS_RUNS_MAX = 60;
+const FLIGHTS_LOG_MAX = 100;
+const FLIGHTS_DEALS_MAX = 80;
+const FLIGHTS_REPORT_MAX_DEALS = 50;
+const FLIGHTS_CHECKED_MAX = 50;
+const FLIGHTS_DEFAULT_EMAIL = 'dariovillalon17@gmail.com';
+const FLIGHTS_REALERT_DROP = 0.03;          // re-avisar si baja 3% más que el último aviso
+const FLIGHTS_REALERT_AFTER_MS = 7 * 86400000; // o si pasó una semana del último aviso
+const IATA_RE = /^[A-Z]{3}$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+const FLIGHTS_DEFAULT_WATCHES = [
+  ['BUE', 'PUJ', 'Punta Cana',  'caribe', true],
+  ['BUE', 'CUN', 'Cancún',      'caribe', true],
+  ['COR', 'CUN', 'Cancún',      'caribe', true],
+  ['BUE', 'AUA', 'Aruba',       'caribe', true],
+  ['COR', 'PUJ', 'Punta Cana',  'caribe', true],
+  ['BUE', 'MIA', 'Miami',       'eeuu',   true],
+  ['BUE', 'LIS', 'Lisboa',      'europa', true, '2027-02-01'],
+  ['BUE', 'BCN', 'Barcelona',   'europa', true],
+].map(([origin, dest, destName, region, beach, from = '2027-03-01']) => ({
+  id: `w_${origin}_${dest}`.toLowerCase(),
+  kind: 'roundtrip',
+  origin, dest, destName, region, beach,
+  window: { from, to: '2027-06-30' },
+  nights: { min: 7, max: 14 },
+  everyDays: 2,
+  maxUsd: null,
+  active: true,
+  note: null,
+  lastCheckedAt: null,
+  lastAlert: null,
+}));
+
+function flightsDefaults() {
+  return {
+    settings: { email: FLIGHTS_DEFAULT_EMAIL, alertPct: 15, paused: false },
+    watches: FLIGHTS_DEFAULT_WATCHES.map(w => ({ ...w })),
+    deals: [],
+    history: {},
+    runs: [],
+    log: [],
+    stats: { mailsSent: 0 },
+  };
+}
+
+function normalizeFlights(data) {
+  const d = flightsDefaults();
+  if (!data || typeof data !== 'object') return d;
+  const s = data.settings && typeof data.settings === 'object' ? data.settings : {};
+  return {
+    settings: {
+      email: typeof s.email === 'string' && s.email ? s.email : d.settings.email,
+      alertPct: Number.isFinite(Number(s.alertPct)) ? Number(s.alertPct) : d.settings.alertPct,
+      paused: !!s.paused,
+    },
+    watches: Array.isArray(data.watches) ? data.watches : d.watches,
+    deals: Array.isArray(data.deals) ? data.deals : [],
+    history: data.history && typeof data.history === 'object' && !Array.isArray(data.history) ? data.history : {},
+    runs: Array.isArray(data.runs) ? data.runs : [],
+    log: Array.isArray(data.log) ? data.log : [],
+    stats: { mailsSent: Number(data.stats?.mailsSent) || 0 },
+  };
+}
+
+async function readFlightsFile() {
+  try { return JSON.parse(await fs.readFile(FLIGHTS_FILE, 'utf-8')); }
+  catch { return null; }
+}
+
+async function readFlights() {
+  if (DATABASE_URL) {
+    const row = await kvGet('flights');
+    if (row !== undefined) return normalizeFlights(row);
+    return normalizeFlights(await kvSeed('flights', normalizeFlights(await readFlightsFile())));
+  }
+  return normalizeFlights(await readFlightsFile());
+}
+
+async function writeFlights(data) {
+  if (data.runs.length > FLIGHTS_RUNS_MAX) data.runs.length = FLIGHTS_RUNS_MAX;
+  if (data.log.length > FLIGHTS_LOG_MAX) data.log.length = FLIGHTS_LOG_MAX;
+  if (data.deals.length > FLIGHTS_DEALS_MAX) data.deals.length = FLIGHTS_DEALS_MAX;
+  for (const k of Object.keys(data.history)) {
+    const h = data.history[k];
+    if (Array.isArray(h) && h.length > FLIGHTS_HISTORY_MAX) h.splice(0, h.length - FLIGHTS_HISTORY_MAX);
+  }
+  if (DATABASE_URL) { await kvSet('flights', data); return; }
+  const tmp = FLIGHTS_FILE + '.tmp';
+  await fs.writeFile(tmp, JSON.stringify(data, null, 2));
+  await fs.rename(tmp, FLIGHTS_FILE);
+}
+
+// Serializa read-modify-write de la fila 'flights' dentro de este proceso.
+let flightsChain = Promise.resolve();
+function withFlightsLock(fn) {
+  const run = flightsChain.then(fn, fn);
+  flightsChain = run.catch(() => {});
+  return run;
+}
+
+const fStr = (v, max = 200) => (typeof v === 'string' ? v.trim().slice(0, max) : (v == null ? null : String(v).slice(0, max))) || null;
+const fNum = (v) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : null; };
+const fUrl = (v) => {
+  const s = fStr(v, 1000);
+  if (!s) return null;
+  try { const u = new URL(s); return (u.protocol === 'https:' || u.protocol === 'http:') ? u.toString() : null; }
+  catch { return null; }
+};
+const fIata = (v) => { const s = typeof v === 'string' ? v.trim().toUpperCase() : ''; return IATA_RE.test(s) ? s : null; };
+// Ids en el mismo alfabeto que acepta DELETE /api/flights/deals/:id
+const slugId = (s) => String(s).toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80);
+const fDate = (v) => { const s = fStr(v, 10); return s && DATE_RE.test(s) ? s : null; };
+const fTs = (v) => {
+  if (v == null || v === '') return null;
+  const n = typeof v === 'number' ? v : Date.parse(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+function sanitizeWatchInput(body, base) {
+  const w = base ? { ...base } : {
+    id: 'w_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    kind: 'roundtrip', region: null, beach: false, active: true, note: null,
+    window: { from: null, to: null }, nights: { min: 7, max: 14 }, everyDays: 2, maxUsd: null,
+    lastCheckedAt: null, lastAlert: null,
+  };
+  if (body.origin !== undefined) { const o = fIata(body.origin); if (!o) throw new Error('Origen inválido (código IATA de 3 letras)'); w.origin = o; }
+  if (body.dest !== undefined) { const d = fIata(body.dest); if (!d) throw new Error('Destino inválido (código IATA de 3 letras)'); w.dest = d; }
+  if (!w.origin || !w.dest) throw new Error('Falta origen o destino');
+  if (body.destName !== undefined) w.destName = fStr(body.destName, 60) || w.dest;
+  if (!w.destName) w.destName = w.dest;
+  if (body.kind !== undefined) w.kind = body.kind === 'multi' ? 'multi' : 'roundtrip';
+  if (body.region !== undefined) w.region = ['caribe', 'eeuu', 'europa', 'brasil', 'otro'].includes(body.region) ? body.region : 'otro';
+  if (body.beach !== undefined) w.beach = !!body.beach;
+  if (body.active !== undefined) w.active = !!body.active;
+  if (body.note !== undefined) w.note = fStr(body.note, 300);
+  if (body.window !== undefined) {
+    const from = fDate(body.window?.from), to = fDate(body.window?.to);
+    if (!from || !to || from > to) throw new Error('Ventana de fechas inválida');
+    w.window = { from, to };
+  }
+  if (body.nights !== undefined) {
+    const min = Math.round(fNum(body.nights?.min) ?? 0), max = Math.round(fNum(body.nights?.max) ?? 0);
+    if (min < 1 || max < min || max > 60) throw new Error('Noches inválidas');
+    w.nights = { min, max };
+  }
+  if (body.everyDays !== undefined) {
+    const e = Math.round(fNum(body.everyDays) ?? 0);
+    if (e < 1 || e > 30) throw new Error('Frecuencia inválida (1 a 30 días)');
+    w.everyDays = e;
+  }
+  if (body.maxUsd !== undefined) w.maxUsd = body.maxUsd === null || body.maxUsd === '' ? null : fNum(body.maxUsd);
+  return w;
+}
+
+// Devuelve { deal } o { error }. Una oferta sin seguimiento ni id recibe un
+// id estable derivado de sus tramos, así el re-aviso y el reemplazo funcionan.
+function sanitizeDeal(raw, nowTs) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: 'la oferta no es un objeto' };
+  const priceUsd = fNum(raw.priceUsd);
+  if (priceUsd == null || priceUsd <= 0) {
+    return { error: 'priceUsd tiene que ser un número JSON mayor a 0, con punto decimal (ej. 558.9)' };
+  }
+  const legs = (Array.isArray(raw.legs) ? raw.legs : []).slice(0, 8).map(l => ({
+    from: fIata(l?.from), to: fIata(l?.to), date: fDate(l?.date),
+    times: fStr(l?.times, 60), airline: fStr(l?.airline, 80), flight: fStr(l?.flight, 60),
+    stops: fStr(l?.stops, 80), seller: fStr(l?.seller, 60), priceUsd: fNum(l?.priceUsd),
+  })).filter(l => l.from && l.to);
+  const kind = raw.kind === 'multi' ? 'multi' : 'roundtrip';
+  if (kind === 'multi' && legs.length < 2) return { error: 'una oferta multi necesita al menos 2 tramos con códigos IATA' };
+  let normal = null;
+  if (raw.normal && typeof raw.normal === 'object') {
+    const lo = fNum(raw.normal.lo), hi = fNum(raw.normal.hi);
+    if (lo && hi && hi >= lo) normal = { lo, hi, label: fStr(raw.normal.label, 200) };
+  }
+  // Los multi no se cuelgan de un seguimiento de ida y vuelta
+  const watchId = kind === 'roundtrip' ? fStr(raw.watchId, 80) : null;
+  let id = raw.id != null ? slugId(fStr(raw.id, 120) || '') : '';
+  if (!id && watchId) id = slugId(watchId);
+  if (!id && legs.length) {
+    id = slugId((kind === 'multi' ? 'm_' : 'd_') + legs.map(l => `${l.from}${l.to}${(l.date || '').replace(/-/g, '')}`).join('_'));
+  }
+  if (!id) return { error: 'falta id (o watchId, o tramos para derivarlo)' };
+  return { deal: {
+    id,
+    watchId,
+    kind,
+    title: fStr(raw.title, 120),
+    origin: fIata(raw.origin) || legs[0]?.from || null,
+    dest: fIata(raw.dest) || legs[0]?.to || null,
+    destName: fStr(raw.destName, 60),
+    legs,
+    priceUsd,
+    approx: !!raw.approx,
+    priceArs: fNum(raw.priceArs),
+    seller: fStr(raw.seller, 60),
+    fare: fStr(raw.fare, 80),
+    seatsLeft: fStr(raw.seatsLeft, 120),
+    baggage: fStr(raw.baggage, 200),
+    normal,
+    maxUsd: fNum(raw.maxUsd) || null,
+    googleNote: fStr(raw.googleNote, 300),
+    beach: !!raw.beach,
+    region: fStr(raw.region, 20),
+    notes: (Array.isArray(raw.notes) ? raw.notes : []).slice(0, 6).map(n => fStr(n, 300)).filter(Boolean),
+    links: (Array.isArray(raw.links) ? raw.links : []).slice(0, 4)
+      .map(l => ({ label: fStr(l?.label, 60) || 'Ver', url: fUrl(l?.url) })).filter(l => l.url),
+    evidence: fStr(raw.evidence, 1000),
+    validated: raw.validated !== false,
+    validatedAt: fTs(raw.validatedAt) ?? nowTs,
+  } };
+}
+
+function dealVerdict(deal) {
+  if (!deal.normal) return 'sin-ref';
+  if (deal.priceUsd < deal.normal.lo) return 'bajo';
+  if (deal.priceUsd > deal.normal.hi) return 'alto';
+  return 'normal';
+}
+
+// "Muy buena": validada y X% debajo del piso normal, o debajo del tope del seguimiento.
+function dealIsGreat(deal, watch, alertPct) {
+  if (!deal.validated) return false;
+  const cap = watch?.maxUsd ?? deal.maxUsd;
+  if (cap && deal.priceUsd <= cap) return true;
+  if (!deal.normal) return false;
+  return deal.priceUsd <= deal.normal.lo * (1 - alertPct / 100);
+}
+
+function shouldRealert(lastAlert, deal, nowTs) {
+  if (!lastAlert || !Number.isFinite(lastAlert.priceUsd)) return true;
+  if (deal.priceUsd <= lastAlert.priceUsd * (1 - FLIGHTS_REALERT_DROP)) return true;
+  return (nowTs - (lastAlert.ts || 0)) > FLIGHTS_REALERT_AFTER_MS;
+}
+
+const fmtUsd = (n) => 'USD ' + Number(n).toLocaleString('es-AR', { maximumFractionDigits: 2 });
+const fmtArs = (n) => 'ARS ' + Number(n).toLocaleString('es-AR', { maximumFractionDigits: 0 });
+
+function flightsEmailText(deals) {
+  const out = [deals.length === 1 ? 'Apareció un vuelo muy barato.' : `Aparecieron ${deals.length} vuelos muy baratos.`, ''];
+  for (const d of deals) {
+    const route = d.legs.length ? d.legs.map(l => `${l.from}→${l.to}`).join(', ') : `${d.origin}→${d.dest}`;
+    out.push(`■ ${d.title || route}`);
+    out.push(`  Precio:   ${d.approx ? '≈ ' : ''}${fmtUsd(d.priceUsd)}${d.priceArs ? ` (${fmtArs(d.priceArs)})` : ''} ${d.kind === 'multi' ? 'total del multidestino' : 'ida y vuelta'}, 1 adulto`);
+    if (d.normal) {
+      const pct = Math.round((1 - d.priceUsd / d.normal.lo) * 100);
+      out.push(`  Normal:   ${fmtUsd(d.normal.lo)}–${fmtUsd(d.normal.hi).replace('USD ', '')} según Google${pct > 0 ? ` (${pct}% debajo del piso)` : ''}`);
+    }
+    for (const l of d.legs) {
+      out.push(`  Tramo:    ${l.from}→${l.to} ${l.date || ''} ${l.airline || ''}${l.stops ? ' · ' + l.stops : ''}`.trimEnd());
+    }
+    if (d.seller) out.push(`  Dónde:    ${d.seller}${d.fare ? ' · tarifa ' + d.fare : ''}`);
+    if (d.seatsLeft) out.push(`  Asientos: ${d.seatsLeft}`);
+    for (const l of d.links) out.push(`  ${l.label}: ${l.url}`);
+    out.push(`  Validado: ${new Date(d.validatedAt).toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })}`);
+    out.push('');
+  }
+  out.push('Los precios cambian rápido: confirmalo en la página antes de pagar.');
+  out.push('', '— Tempo · Vuelos');
+  return out.join('\n');
+}
+
+async function sendFlightsEmail(to, deals) {
+  const user = process.env.SMTP_USER || '';
+  const pass = process.env.SMTP_PASS || '';
+  if (!user || !pass) throw new Error('SMTP_USER y SMTP_PASS no configurados (App Password de Gmail)');
+  const d0 = deals[0];
+  const pct = d0.normal ? Math.round((1 - d0.priceUsd / d0.normal.lo) * 100) : null;
+  const subject = deals.length === 1
+    ? `Vuelo barato: ${d0.title || `${d0.origin}→${d0.dest}`} ${fmtUsd(d0.priceUsd)}${pct > 0 ? ` (−${pct}%)` : ''}`
+    : `${deals.length} vuelos baratos · desde ${fmtUsd(Math.min(...deals.map(d => d.priceUsd)))}`;
+  return smtpSend({
+    host: 'smtp.gmail.com', port: 465, user, pass,
+    from: { address: process.env.SMTP_FROM || user, name: 'Tempo Vuelos' },
+    to, subject, text: flightsEmailText(deals),
+  });
+}
+
+function dueWatches(data, nowTs) {
+  return data.watches.filter(w => w.active && (
+    !w.lastCheckedAt || (nowTs - w.lastCheckedAt) >= (w.everyDays || 2) * 86400000 - 3 * 3600000
+  ));
+}
+
+// Integra un reporte de la tarea diaria. Devuelve el resumen para la tarea
+// (que decide el push con `alerts`). Idempotente por runId: el CLI reintenta
+// el POST si se corta la respuesta y no queremos historial ni avisos dobles.
+async function applyFlightsReport(body) {
+  return withFlightsLock(async () => {
+    const nowTs = Date.now();
+    const data = await readFlights();
+    const runId = fStr(body.runId, 80);
+    if (runId) {
+      const prev = data.runs.find(r => r.runId === runId);
+      if (prev?.response) return { ...prev.response, duplicate: true };
+    }
+    const watchById = new Map(data.watches.map(w => [w.id, w]));
+    const known = (id) => !!id && watchById.has(id);
+
+    const rejected = [];
+    const accepted = [];
+    (Array.isArray(body.deals) ? body.deals.slice(0, FLIGHTS_REPORT_MAX_DEALS) : []).forEach((raw, index) => {
+      const r = sanitizeDeal(raw, nowTs);
+      if (r.error) rejected.push({ index, watchId: fStr(raw?.watchId, 80), reason: r.error });
+      else accepted.push(r.deal);
+    });
+    // Un watchId que no existe no se guarda (historial y vista quedan limpios)
+    for (const d of accepted) if (d.watchId && !known(d.watchId)) d.watchId = null;
+    // Una sola oferta por seguimiento (o por id) en cada reporte: la más barata
+    const byKey = new Map();
+    for (const d of accepted) {
+      const key = d.watchId ? 'w:' + d.watchId : 'id:' + d.id;
+      const prev = byKey.get(key);
+      if (!prev || d.priceUsd < prev.priceUsd) byKey.set(key, d);
+    }
+    const deals = [...byKey.values()];
+
+    const checked = new Set();
+    for (const x of (Array.isArray(body.checked) ? body.checked.slice(0, FLIGHTS_CHECKED_MAX) : [])) {
+      const id = fStr(x, 80); if (known(id)) checked.add(id);
+    }
+    const failures = (Array.isArray(body.failures) ? body.failures : []).slice(0, 30)
+      .map(f => ({ watchId: fStr(f?.watchId, 80), reason: fStr(f?.reason, 300) }));
+    for (const f of failures) if (known(f.watchId)) checked.add(f.watchId);
+
+    const great = [];
+    for (const d of deals) {
+      d.verdict = dealVerdict(d);
+      const w = d.watchId ? watchById.get(d.watchId) : null;
+      const prevDeal = data.deals.find(x => x.id === d.id);
+      // El tope de un multi lo fija Dario una vez; la tarea no tiene por qué repetirlo
+      if (!w && d.maxUsd == null && prevDeal?.maxUsd) d.maxUsd = prevDeal.maxUsd;
+      if (w) {
+        checked.add(w.id);
+        if (!d.destName) d.destName = w.destName;
+        if (!d.beach && w.beach) d.beach = true;
+        if (!d.region) d.region = w.region;
+        (data.history[w.id] ||= []).push({
+          ts: d.validatedAt, priceUsd: d.priceUsd,
+          out: d.legs[0]?.date || null, ret: d.legs[d.legs.length - 1]?.date || null,
+          verdict: d.verdict,
+        });
+      }
+      d.great = dealIsGreat(d, w, data.settings.alertPct);
+      const last = w ? w.lastAlert : prevDeal?.lastAlert;
+      d.lastAlert = last || null;
+      if (d.great && !data.settings.paused && shouldRealert(last, d, nowTs)) great.push({ d, w });
+      data.deals = data.deals.filter(x => x.id !== d.id && (!w || x.watchId !== w.id));
+      data.deals.unshift(d);
+    }
+    // Una ruta cuya oferta vino rota no cuenta como chequeada: que se reintente
+    for (const r of rejected) if (r.watchId && !deals.some(d => d.watchId === r.watchId)) checked.delete(r.watchId);
+    for (const id of checked) watchById.get(id).lastCheckedAt = nowTs;
+
+    // El aviso queda registrado aunque falle el mail: el push de la tarea lo
+    // entrega igual y así no se repite cada corrida. El mail de vuelos no
+    // espera el backoff de BTC (son una vez por día, no cada 10 minutos).
+    let emailed = false, emailError = null;
+    const alertDeals = great.map(g => g.d);
+    if (alertDeals.length) {
+      const to = data.settings.email;
+      try { await sendFlightsEmail(to, alertDeals); emailed = true; data.stats.mailsSent += 1; }
+      catch (e) { emailError = e.message; console.warn('[flights] mail falló:', e.message); }
+      for (const g of great) {
+        const la = { ts: nowTs, priceUsd: g.d.priceUsd, mailed: emailed };
+        if (g.w) g.w.lastAlert = la;
+        g.d.lastAlert = la;
+      }
+      data.log.unshift({ ts: nowTs, to, ok: emailed, error: emailError, deals: alertDeals.map(d => ({ id: d.id, title: d.title, priceUsd: d.priceUsd })) });
+    }
+
+    const response = {
+      ok: true,
+      stored: deals.length,
+      rejected,
+      alerts: alertDeals.map(d => ({
+        id: d.id, kind: d.kind, title: d.title, priceUsd: d.priceUsd, approx: d.approx,
+        normalLo: d.normal?.lo ?? null, seller: d.seller,
+        dates: d.legs.map(l => l.date).filter(Boolean),
+      })),
+      emailed, emailError,
+    };
+    data.runs.unshift({
+      ts: nowTs,
+      runId,
+      startedAt: fTs(body.runAt),
+      checked: [...checked],
+      validated: deals.length,
+      rejected: rejected.length,
+      alerts: alertDeals.length,
+      emailed,
+      failures,
+      note: fStr(body.note, 500),
+      response,
+    });
+    await writeFlights(data);
+    return response;
+  });
+}
+
+// ============================================================
 // API handler
 // ============================================================
 
@@ -2434,6 +2850,171 @@ async function handleApi(req, res, parsedUrl) {
     }
   }
 
+  // ---- Vuelos ----
+  if (pathname === '/api/flights' && req.method === 'GET') {
+    const data = await readFlights();
+    const nowTs = Date.now();
+    const due = new Set(dueWatches(data, nowTs).map(w => w.id));
+    const watchById = new Map(data.watches.map(w => [w.id, w]));
+    return sendJSON(res, 200, {
+      settings: data.settings,
+      watches: data.watches.map(w => ({ ...w, due: due.has(w.id) })),
+      // "Muy buena" se recalcula al leer: si Dario cambia el umbral o un tope,
+      // la pestaña lo refleja sin esperar al próximo chequeo
+      deals: data.deals.map(d => ({ ...d, great: dealIsGreat(d, d.watchId ? watchById.get(d.watchId) : null, data.settings.alertPct) })),
+      stats: data.stats,
+      history: data.history,
+      runs: data.runs.slice(0, 20),
+      log: data.log.slice(0, 25),
+      mailConfigured: !!(process.env.SMTP_USER && process.env.SMTP_PASS),
+      serverTime: nowTs,
+    });
+  }
+
+  if (pathname === '/api/flights/due' && req.method === 'GET') {
+    const data = await readFlights();
+    return sendJSON(res, 200, {
+      settings: data.settings,
+      // Pausar frena solo los avisos (mail y push): los precios se siguen chequeando
+      due: dueWatches(data, Date.now()),
+      // Lo último validado por seguimiento, para que la tarea compare
+      last: Object.fromEntries(data.watches.map(w => {
+        const h = data.history[w.id];
+        return [w.id, Array.isArray(h) && h.length ? h[h.length - 1] : null];
+      })),
+      multi: data.deals.filter(d => d.kind === 'multi').map(d => ({ id: d.id, title: d.title, priceUsd: d.priceUsd, maxUsd: d.maxUsd ?? null, legs: d.legs, seller: d.seller, validatedAt: d.validatedAt })),
+    });
+  }
+
+  if (pathname === '/api/flights/report' && req.method === 'POST') {
+    let body;
+    try { body = await readBody(req); }
+    catch (e) { return sendJSON(res, 400, { error: 'JSON inválido: ' + e.message }); }
+    if (!body || typeof body !== 'object' || Array.isArray(body) || !Array.isArray(body.deals)) {
+      return sendJSON(res, 400, { error: 'El reporte tiene que ser { deals: [...] }' });
+    }
+    try {
+      return sendJSON(res, 200, await applyFlightsReport(body));
+    } catch (e) {
+      console.error('[flights] report falló:', e);
+      return sendJSON(res, 500, { error: e.message });
+    }
+  }
+
+  if (pathname === '/api/flights/settings' && req.method === 'PUT') {
+    try {
+      const body = await readBody(req);
+      const settings = await withFlightsLock(async () => {
+        const data = await readFlights();
+        if (body.email !== undefined) {
+          const e = (body.email || '').trim();
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) throw new Error('Email inválido');
+          data.settings.email = e;
+        }
+        if (body.alertPct !== undefined) {
+          const p = body.alertPct === '' || body.alertPct === null ? NaN : Number(body.alertPct);
+          if (!Number.isFinite(p) || p < 0 || p > 80) throw new Error('Porcentaje inválido (0 a 80)');
+          data.settings.alertPct = p;
+        }
+        if (body.paused !== undefined) data.settings.paused = !!body.paused;
+        await writeFlights(data);
+        return data.settings;
+      });
+      return sendJSON(res, 200, { ok: true, settings });
+    } catch (e) {
+      return sendJSON(res, 400, { error: e.message });
+    }
+  }
+
+  if (pathname === '/api/flights/watches' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const watch = await withFlightsLock(async () => {
+        const data = await readFlights();
+        const w = sanitizeWatchInput(body, null);
+        if (!w.window.from) throw new Error('Falta la ventana de fechas');
+        data.watches.push(w);
+        await writeFlights(data);
+        return w;
+      });
+      return sendJSON(res, 200, { ok: true, watch });
+    } catch (e) {
+      return sendJSON(res, 400, { error: e.message });
+    }
+  }
+
+  const flightWatchMatch = pathname.match(/^\/api\/flights\/watches\/([a-z0-9_]+)$/i);
+  if (flightWatchMatch && (req.method === 'PUT' || req.method === 'DELETE')) {
+    const id = flightWatchMatch[1];
+    try {
+      const body = req.method === 'PUT' ? await readBody(req) : null;
+      const result = await withFlightsLock(async () => {
+        const data = await readFlights();
+        const idx = data.watches.findIndex(w => w.id === id);
+        if (idx < 0) return null;
+        if (req.method === 'DELETE') {
+          data.watches.splice(idx, 1);
+          delete data.history[id];
+          data.deals = data.deals.filter(d => d.watchId !== id);
+          await writeFlights(data);
+          return { ok: true };
+        }
+        const before = data.watches[idx];
+        const w = sanitizeWatchInput(body, before);
+        if (w.origin !== before.origin || w.dest !== before.dest) {
+          // Otra ruta: el historial, la oferta y el último aviso eran de la anterior
+          w.lastAlert = null;
+          w.lastCheckedAt = null;
+          delete data.history[id];
+          data.deals = data.deals.filter(d => d.watchId !== id);
+        } else if (JSON.stringify(w.window) !== JSON.stringify(before.window) || JSON.stringify(w.nights) !== JSON.stringify(before.nights)) {
+          w.lastCheckedAt = null; // que el próximo chequeo busque con las fechas nuevas
+        }
+        if (body.resetAlert === true) w.lastAlert = null;
+        data.watches[idx] = w;
+        await writeFlights(data);
+        return { ok: true, watch: w };
+      });
+      if (!result) return sendJSON(res, 404, { error: 'Seguimiento no encontrado' });
+      return sendJSON(res, 200, result);
+    } catch (e) {
+      return sendJSON(res, 400, { error: e.message });
+    }
+  }
+
+  const flightDealMatch = pathname.match(/^\/api\/flights\/deals\/([a-z0-9_-]+)$/i);
+  if (flightDealMatch && req.method === 'DELETE') {
+    const id = flightDealMatch[1];
+    const found = await withFlightsLock(async () => {
+      const data = await readFlights();
+      const before = data.deals.length;
+      data.deals = data.deals.filter(d => d.id !== id);
+      if (data.deals.length === before) return false;
+      await writeFlights(data);
+      return true;
+    });
+    if (!found) return sendJSON(res, 404, { error: 'Oferta no encontrada' });
+    return sendJSON(res, 200, { ok: true });
+  }
+
+  if (pathname === '/api/flights/test-email' && req.method === 'POST') {
+    try {
+      const body = await readBody(req).catch(() => ({}));
+      const data = await readFlights();
+      const to = (body.to || data.settings.email || '').trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return sendJSON(res, 400, { error: 'Email inválido' });
+      await sendFlightsEmail(to, [{
+        title: 'Mail de prueba de Tempo Vuelos', origin: 'EZE', dest: 'PUJ',
+        legs: [{ from: 'EZE', to: 'PUJ', date: '2027-04-17', airline: 'Ejemplo' }],
+        priceUsd: 1, approx: false, priceArs: null, normal: null, seller: 'prueba',
+        fare: null, seatsLeft: null, links: [], validatedAt: Date.now(),
+      }]);
+      return sendJSON(res, 200, { ok: true, to });
+    } catch (e) {
+      return sendJSON(res, 500, { error: e.message });
+    }
+  }
+
   return sendJSON(res, 404, { error: 'Not found' });
 }
 
@@ -2514,6 +3095,17 @@ const server = http.createServer(async (req, res) => {
   } catch {
     res.writeHead(400);
     return res.end('Bad request');
+  }
+
+  // CSRF: un form de otro sitio puede mandar POST text/plain sin preflight y el
+  // navegador adjunta la Basic auth cacheada. Exigir JSON en todo POST/PUT/PATCH
+  // de la API fuerza el preflight, que este server nunca autoriza. La app y
+  // vuelos-tempo.mjs siempre mandan application/json.
+  if (parsedUrl.pathname.startsWith('/api/') && ['POST', 'PUT', 'PATCH'].includes(req.method)) {
+    const ct = String(req.headers['content-type'] || '').toLowerCase();
+    if (!ct.startsWith('application/json')) {
+      return sendJSON(res, 415, { error: 'Content-Type tiene que ser application/json' });
+    }
   }
 
   try {

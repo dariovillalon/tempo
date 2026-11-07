@@ -12,6 +12,7 @@ import { renderFitness }    from './views/fitness.js';
 import { renderMyTime }     from './views/mytime.js';
 import { renderBills }      from './views/bills.js';
 import { renderPromos }     from './views/promos.js';
+import { renderFlights }    from './views/flights.js';
 import { renderProject }    from './views/project.js';
 import { renderSettings }   from './views/settings.js';
 import { setLastUsed, state } from './state.js';
@@ -33,6 +34,7 @@ const TITLES = {
   mytime: 'Mi tiempo',
   bills: 'Cuentas',
   promos: 'Promociones',
+  flights: 'Vuelos',
   settings: 'Ajustes',
 };
 
@@ -70,6 +72,7 @@ const renderView = (route) => {
     case 'mytime':     renderMyTime(root); break;
     case 'bills':      renderBills(root); break;
     case 'promos':     renderPromos(root); break;
+    case 'flights':    renderFlights(root); break;
     case 'project': {
       title = renderProject(root, arg) || 'Proyecto';
       // expand any ancestor in the sidebar so this subproject is visible
