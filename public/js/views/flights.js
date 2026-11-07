@@ -46,6 +46,9 @@ const fmtRange = (a, b) => {
 const fmtNum = (n) => Number(n).toLocaleString('es-AR', { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 });
 const fmtUsd = (n, approx) => `${approx ? '≈ ' : ''}USD ${fmtNum(n)}`;
 const fmtArs = (n) => 'ARS ' + Number(n).toLocaleString('es-AR', { maximumFractionDigits: 0 });
+// Mismo criterio que el server (pendingFlightMails): no salió y tiene menos de una semana
+const MAIL_RETRY_MS = 7 * 86400000;
+const isPendingMail = (l) => !l.ok && !l.resolved && Date.now() - l.ts < MAIL_RETRY_MS;
 const pctBelow = (d) => (d.normal ? Math.round((1 - d.priceUsd / d.normal.lo) * 100) : null);
 // hasOwn: un id raro (ej. "__proto__") no puede devolver algo del prototipo
 const historyFor = (id) => {
@@ -137,7 +140,8 @@ const paint = (root) => {
 
     ${!lastRun ? `<div class="fl-note">Todavía no corrió el chequeo diario. Corre en la Mac todos los días a las 9:00 con Chrome y sube lo que valida acá.</div>` : ''}
     ${settings.paused ? `<div class="fl-note fl-note-warn">Avisos pausados: se siguen chequeando precios, pero no te llega mail ni push.</div>` : ''}
-    ${!cache.mailConfigured ? `<div class="fl-note fl-note-warn">El mail no está configurado en este server (faltan SMTP_USER y SMTP_PASS). Las ofertas se guardan igual.</div>` : ''}
+    ${settings.mailVia === 'server' && !cache.mailConfigured ? `<div class="fl-note fl-note-warn">El mail no está configurado en este server (faltan SMTP_USER y SMTP_PASS). Las ofertas se guardan igual.</div>` : ''}
+    ${cache.log.some(isPendingMail) ? `<div class="fl-note">Hay mails de alerta pendientes: los manda la Mac al subir el próximo chequeo.</div>` : ''}
 
     <div class="fl-kpis">
       <div class="fl-kpi"><span>Mejor oferta</span><strong>${best ? `${escapeHtml(best.destName || best.dest || '')} ${fmtUsd(best.priceUsd, best.approx)}` : '—'}</strong>${best ? `<em>${pctBelow(best)}% debajo del piso normal</em>` : '<em>Nada debajo de lo normal por ahora</em>'}</div>
@@ -176,11 +180,18 @@ const paint = (root) => {
           <label>Avisar si el precio queda
             <span class="fl-inline"><input class="input" id="fl-pct" type="number" min="0" max="80" step="1" required value="${settings.alertPct}"> % o más debajo del piso normal</span>
           </label>
+          <label>Quién manda el mail
+            <select class="input" id="fl-mailvia">
+              <option value="mac" ${settings.mailVia !== 'server' ? 'selected' : ''}>La Mac, al subir cada chequeo</option>
+              <option value="server" ${settings.mailVia === 'server' ? 'selected' : ''}>El server (solo si Render permite SMTP)</option>
+            </select>
+          </label>
           <label class="fl-check"><input type="checkbox" id="fl-paused" ${settings.paused ? 'checked' : ''}> Pausar avisos (mail y push)</label>
+          ${settings.mailVia !== 'server' ? '<p class="fl-help">Render gratis no deja mandar mails, así que los manda la Mac con tu Gmail al terminar cada chequeo. Si la Mac está apagada, salen en el chequeo siguiente.</p>' : ''}
           <p class="fl-help">También aviso si una ruta o un multidestino baja de su tope en USD. No repito un aviso salvo que baje 3% más o pase una semana. El push lo manda la tarea de la Mac (al celular llega con Remote Control conectado).</p>
           <div class="fl-row">
             <button class="btn btn-primary btn-sm" type="submit">Guardar</button>
-            <button class="btn btn-secondary btn-sm" type="button" data-act="test-mail">Mandar mail de prueba</button>
+            ${settings.mailVia === 'server' ? '<button class="btn btn-secondary btn-sm" type="button" data-act="test-mail">Mandar mail de prueba</button>' : ''}
           </div>
         </form>
       </section>
@@ -362,8 +373,8 @@ const renderRun = (r) => `<div class="fl-run">
 
 const renderLog = (l) => `<div class="fl-run">
   <span>${new Date(l.ts).toLocaleString('es-AR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
-  <span>${l.ok ? 'Mail enviado' : '<span class="warn-text">Mail falló</span>'} · ${escapeHtml((l.deals || []).map(d => `${d.title || d.id} USD ${fmtNum(d.priceUsd)}`).join(', '))}</span>
-  ${l.error ? `<span class="fl-small warn-text">${escapeHtml(l.error)}</span>` : ''}
+  <span>${l.ok ? (l.via === 'mac' ? 'Mail enviado desde la Mac' : 'Mail enviado') : (isPendingMail(l) ? '<span class="warn-text">Mail pendiente (lo manda la Mac)</span>' : '<span class="warn-text">Mail no enviado</span>')} · ${escapeHtml((l.deals || []).map(d => `${d.title || d.id} USD ${fmtNum(d.priceUsd)}`).join(', '))}</span>
+  ${!l.ok && l.error ? `<span class="fl-small warn-text">${escapeHtml(l.error)}</span>` : ''}
 </div>`;
 
 // ---------- eventos ----------
@@ -439,7 +450,11 @@ const wire = (root) => {
     if (btn?.disabled) return;
     if (btn) btn.disabled = true;
     try {
-      const body = { email: root.querySelector('#fl-email').value.trim(), paused: root.querySelector('#fl-paused').checked };
+      const body = {
+        email: root.querySelector('#fl-email').value.trim(),
+        paused: root.querySelector('#fl-paused').checked,
+        mailVia: root.querySelector('#fl-mailvia').value,
+      };
       const pctRaw = root.querySelector('#fl-pct').value.trim();
       if (pctRaw !== '') body.alertPct = Number(pctRaw); // vacío = no tocar el umbral guardado
       await api.saveFlightSettings(body);

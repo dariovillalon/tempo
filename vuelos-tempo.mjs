@@ -4,19 +4,26 @@
 //
 //   node vuelos-tempo.mjs due               → rutas que tocan revisar hoy (+ último precio)
 //   node vuelos-tempo.mjs all               → todo /api/flights
-//   node vuelos-tempo.mjs report <archivo>  → sube precios validados; imprime alertas
+//   node vuelos-tempo.mjs report <archivo>  → sube precios validados, manda los mails
+//                                              pendientes desde la Mac e imprime alertas
+//   node vuelos-tempo.mjs mail-pending      → reintenta los mails de alerta que no salieron
+//   node vuelos-tempo.mjs test-mail         → manda un mail de prueba desde la Mac
+//
+// Los mails salen desde la Mac (Gmail SMTP con SMTP_USER/SMTP_PASS del .env)
+// porque Render gratis bloquea los puertos SMTP desde sep-2025.
 //
 // Lee TEMPO_PASSWORD (y opcional TEMPO_URL) del entorno o del .env de esta carpeta.
 // TEMPO_URL por defecto: la web en Render. Para probar contra un server local:
 //   TEMPO_URL=http://localhost:7788 node vuelos-tempo.mjs due
 //
 // Códigos de salida: 0 ok · 1 error · 2 uso incorrecto · 3 el server rechazó ofertas
-// (la respuesta igual se imprime, con `rejected`).
+// (la respuesta igual se imprime, con `rejected`) · 4 mail-pending no pudo mandar alguno.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { smtpSend } from './lib/smtp.mjs';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_URL = 'https://tempo-kqoo.onrender.com';
@@ -24,21 +31,27 @@ const TIMEOUT_MS = 120_000; // Render free duerme: el primer request puede tarda
 const RETRIES = 3;
 
 // Mismas reglas que el loader de server.js: export opcional, trim, comillas solo si cierran.
-async function loadEnv() {
-  const env = { TEMPO_URL: process.env.TEMPO_URL, TEMPO_PASSWORD: process.env.TEMPO_PASSWORD };
+const ENV_KEYS = ['TEMPO_URL', 'TEMPO_PASSWORD', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM', 'SMTP_HOST', 'SMTP_PORT'];
+
+async function readEnvFile() {
+  const env = Object.fromEntries(ENV_KEYS.map(k => [k, process.env[k]]));
   try {
     const raw = await fs.readFile(path.join(DIR, '.env'), 'utf-8');
     for (const rawLine of raw.split(/\r?\n/)) {
       const line = rawLine.trim();
       if (!line || line.startsWith('#')) continue;
-      const m = line.match(/^(?:export\s+)?(TEMPO_URL|TEMPO_PASSWORD)\s*=\s*(.*)$/);
-      if (!m) continue;
+      const m = line.match(/^(?:export\s+)?([A-Z_]+)\s*=\s*(.*)$/);
+      if (!m || !ENV_KEYS.includes(m[1])) continue;
       let v = m[2].trim();
       if ((v[0] === '"' && v.endsWith('"')) || (v[0] === "'" && v.endsWith("'"))) v = v.slice(1, -1);
       if (env[m[1]] === undefined) env[m[1]] = v;
     }
   } catch { /* .env opcional */ }
+  return env;
+}
 
+async function loadEnv() {
+  const env = await readEnvFile();
   let url;
   try { url = new URL(env.TEMPO_URL || DEFAULT_URL); }
   catch { throw fatal('TEMPO_URL no es una URL válida'); }
@@ -88,6 +101,76 @@ async function call(method, route, body) {
   throw new Error(`${lastErr.message} (después de ${RETRIES} intentos)`);
 }
 
+// ---- Mails desde la Mac ----
+async function smtpConfig() {
+  const env = await readEnvFile();
+  if (!env.SMTP_USER || !env.SMTP_PASS) return null;
+  return {
+    host: env.SMTP_HOST || 'smtp.gmail.com',
+    port: Number(env.SMTP_PORT) || 465,
+    user: env.SMTP_USER,
+    pass: env.SMTP_PASS,
+    from: { address: env.SMTP_FROM || env.SMTP_USER, name: 'Tempo Vuelos' },
+  };
+}
+
+// Diario local de mails ya entregados (data/ está gitignoreado). Se anota apenas
+// Gmail acepta el mail y se borra cuando Tempo confirmó el resultado: si ese aviso
+// falla (Render deployando, corte), la corrida siguiente solo avisa y no reenvía.
+const JOURNAL = path.join(DIR, 'data', 'vuelos-mails-enviados.json');
+const JOURNAL_TTL_MS = 8 * 86400000;
+async function readJournal() {
+  try {
+    const j = JSON.parse(await fs.readFile(JOURNAL, 'utf-8'));
+    const now = Date.now();
+    return Object.fromEntries(Object.entries(j).filter(([, ts]) => now - ts < JOURNAL_TTL_MS));
+  } catch { return {}; }
+}
+async function writeJournal(j) {
+  await fs.mkdir(path.dirname(JOURNAL), { recursive: true });
+  const tmp = JOURNAL + '.tmp';
+  await fs.writeFile(tmp, JSON.stringify(j, null, 2));
+  await fs.rename(tmp, JOURNAL);
+}
+
+// Manda los mails que Tempo dejó pendientes, retira los que ya no corresponden y
+// le avisa a Tempo el resultado de cada uno.
+async function sendPendingMails() {
+  const plan = await call('GET', '/api/flights/mail-pending');
+  const out = { sent: 0, failed: [], retired: [], unrecorded: [], paused: !!plan.paused, byId: {} };
+  if (plan.paused) return out;
+  const journal = await readJournal();
+  const cfg = await smtpConfig();
+
+  for (const st of plan.stale || []) {
+    try { await call('POST', '/api/flights/mail-result', { id: st.id, ok: false, resolve: true, error: st.reason }); out.retired.push(st); }
+    catch (e) { out.unrecorded.push({ id: st.id, error: e.message }); }
+  }
+
+  for (const m of plan.mails || []) {
+    let ok = false, error = null;
+    if (journal[m.id]) ok = true; // ya salió en una corrida anterior: solo falta avisarle a Tempo
+    else if (!cfg) error = 'faltan SMTP_USER y SMTP_PASS en el .env de la Mac';
+    else {
+      try {
+        await smtpSend({ ...cfg, to: m.to, subject: m.subject, text: m.text });
+        ok = true;
+        journal[m.id] = Date.now();
+        await writeJournal(journal);
+      } catch (e) { error = e.message; }
+    }
+    out.byId[m.id] = { sent: ok, error };
+    if (ok) out.sent++; else out.failed.push({ id: m.id, error });
+    try {
+      await call('POST', '/api/flights/mail-result', { id: m.id, ok, error });
+      if (journal[m.id]) { delete journal[m.id]; await writeJournal(journal); }
+    } catch (e) {
+      out.unrecorded.push({ id: m.id, error: 'no pude avisarle a Tempo: ' + e.message });
+    }
+  }
+  return out;
+}
+
 const [cmd, arg] = process.argv.slice(2);
 try {
   if (cmd === 'due') {
@@ -102,13 +185,40 @@ try {
     // corriendo el comando de nuevo con el mismo archivo), el server no lo aplica dos veces.
     payload.runId ||= 'r_' + crypto.createHash('sha256').update(text).digest('hex').slice(0, 32);
     const res = await call('POST', '/api/flights/report', payload);
+    // Después del reporte: mandar desde la Mac lo que Tempo dejó pendiente (incluye
+    // los de corridas anteriores que no salieron). Un fallo acá no invalida el reporte.
+    try {
+      res.macMail = await sendPendingMails();
+      // emailed habla del mail de ESTA corrida, no de reintentos viejos
+      const mine = res.mailId ? res.macMail.byId[res.mailId] : null;
+      if (mine?.sent) { res.emailed = true; res.emailError = null; }
+      else if (mine) res.emailError = mine.error;
+      else if (res.mailId && !res.emailed) res.emailError = res.macMail.paused ? 'avisos pausados' : 'el mail no salió';
+    } catch (e) {
+      res.macMail = { sent: 0, failed: [{ error: e.message }] };
+      if (res.alerts?.length) res.emailError = e.message;
+    }
     console.log(JSON.stringify(res, null, 2));
     if (Array.isArray(res.rejected) && res.rejected.length) {
       console.error(`vuelos-tempo: el server rechazó ${res.rejected.length} oferta(s); ver "rejected"`);
       process.exit(3);
     }
+  } else if (cmd === 'mail-pending') {
+    const r = await sendPendingMails();
+    console.log(JSON.stringify(r, null, 2));
+    if (r.failed.length || r.unrecorded.length) process.exit(4);
+  } else if (cmd === 'test-mail') {
+    const cfg = await smtpConfig();
+    if (!cfg) throw fatal('Faltan SMTP_USER y SMTP_PASS en el .env de esta carpeta');
+    const { settings } = await call('GET', '/api/flights/due');
+    await smtpSend({
+      ...cfg, to: settings.email,
+      subject: 'Mail de prueba de Tempo Vuelos',
+      text: 'Si te llegó este mail, la Mac puede mandarte las alertas de vuelos baratos.\n\n— Tempo · Vuelos',
+    });
+    console.log(JSON.stringify({ ok: true, to: settings.email }, null, 2));
   } else {
-    console.error('Uso: node vuelos-tempo.mjs due | all | report <archivo.json>');
+    console.error('Uso: node vuelos-tempo.mjs due | all | report <archivo.json> | mail-pending | test-mail');
     process.exit(2);
   }
 } catch (e) {
