@@ -7,8 +7,8 @@ import { existsSync, createReadStream, readFileSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import url from 'node:url';
-import tls from 'node:tls';
 import crypto from 'node:crypto';
+import { smtpSend } from './lib/smtp.mjs';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 
@@ -1392,127 +1392,7 @@ async function fetchBtcPrice() {
   }
 }
 
-// ---- Mínimo cliente SMTP sobre TLS implícito (puerto 465) ----
-// Implementado con node:tls para no agregar dependencias externas.
-// Soporta Gmail App Password (AUTH LOGIN) usando SMTP_USER y SMTP_PASS.
-
-function smtpEncodeUtf8Header(s) {
-  // Si el asunto trae caracteres no-ASCII, codificar como =?UTF-8?B?...?= (RFC 2047)
-  if (/^[\x20-\x7E]*$/.test(s)) return s;
-  const b64 = Buffer.from(s, 'utf-8').toString('base64');
-  return `=?UTF-8?B?${b64}?=`;
-}
-
-function buildEmailMessage({ from, to, subject, text }) {
-  const date = new Date().toUTCString();
-  const fromAddr = typeof from === 'string' ? from : from.address;
-  const fromName = typeof from === 'object' && from.name ? from.name : 'Tempo BTC Alerts';
-  const headers = [
-    `From: ${smtpEncodeUtf8Header(fromName)} <${fromAddr}>`,
-    `To: ${to}`,
-    `Subject: ${smtpEncodeUtf8Header(subject)}`,
-    `Date: ${date}`,
-    `MIME-Version: 1.0`,
-    `Content-Type: text/plain; charset=UTF-8`,
-    `Content-Transfer-Encoding: 8bit`,
-  ];
-  // RFC 5321: dot-stuffing — líneas que empiezan con '.' deben duplicarlo.
-  const body = (text || '').replace(/\r?\n/g, '\r\n').replace(/^\./gm, '..');
-  return headers.join('\r\n') + '\r\n\r\n' + body + '\r\n';
-}
-
-function smtpSend({ host, port, user, pass, from, to, subject, text }) {
-  return new Promise((resolve, reject) => {
-    const socket = tls.connect({ host, port, servername: host });
-    let buffer = '';
-    let stage = 'greet';
-    const cleanup = (err, ok) => {
-      socket.removeAllListeners();
-      try { socket.destroy(); } catch {}
-      if (err) reject(err); else resolve(ok);
-    };
-    const overall = setTimeout(() => cleanup(new Error('SMTP timeout')), 20000);
-
-    const write = (line) => socket.write(line + '\r\n');
-
-    socket.on('error', (e) => { clearTimeout(overall); cleanup(e); });
-    socket.on('end',   () => { clearTimeout(overall); if (stage !== 'done') cleanup(new Error('SMTP cerrado prematuramente')); });
-
-    socket.on('data', (chunk) => {
-      buffer += chunk.toString('utf-8');
-      // Cada respuesta SMTP termina con \r\n y la última línea no tiene '-' después del código.
-      while (true) {
-        const idx = buffer.indexOf('\r\n');
-        if (idx < 0) break;
-        const line = buffer.slice(0, idx);
-        buffer = buffer.slice(idx + 2);
-        const code = parseInt(line.slice(0, 3), 10);
-        const more = line.charAt(3) === '-';
-        if (more) continue; // esperar última línea de la respuesta multi-línea
-        try { handleResponse(code, line); }
-        catch (e) { clearTimeout(overall); cleanup(e); return; }
-      }
-    });
-
-    const handleResponse = (code, line) => {
-      switch (stage) {
-        case 'greet':
-          if (code !== 220) throw new Error('SMTP greet: ' + line);
-          stage = 'ehlo';
-          write('EHLO tempo.local');
-          break;
-        case 'ehlo':
-          if (code !== 250) throw new Error('SMTP EHLO: ' + line);
-          stage = 'auth';
-          write('AUTH LOGIN');
-          break;
-        case 'auth':
-          if (code !== 334) throw new Error('SMTP AUTH: ' + line);
-          stage = 'auth-user';
-          write(Buffer.from(user, 'utf-8').toString('base64'));
-          break;
-        case 'auth-user':
-          if (code !== 334) throw new Error('SMTP AUTH user: ' + line);
-          stage = 'auth-pass';
-          write(Buffer.from(pass, 'utf-8').toString('base64'));
-          break;
-        case 'auth-pass':
-          if (code !== 235) throw new Error('SMTP AUTH pass: ' + line);
-          stage = 'mail';
-          write(`MAIL FROM:<${from.address || from}>`);
-          break;
-        case 'mail':
-          if (code !== 250) throw new Error('SMTP MAIL FROM: ' + line);
-          stage = 'rcpt';
-          write(`RCPT TO:<${to}>`);
-          break;
-        case 'rcpt':
-          if (code !== 250 && code !== 251) throw new Error('SMTP RCPT TO: ' + line);
-          stage = 'data';
-          write('DATA');
-          break;
-        case 'data':
-          if (code !== 354) throw new Error('SMTP DATA: ' + line);
-          stage = 'body';
-          socket.write(buildEmailMessage({ from, to, subject, text }));
-          socket.write('\r\n.\r\n');
-          break;
-        case 'body':
-          if (code !== 250) throw new Error('SMTP body: ' + line);
-          stage = 'quit';
-          write('QUIT');
-          break;
-        case 'quit':
-          stage = 'done';
-          clearTimeout(overall);
-          cleanup(null, { ok: true });
-          break;
-        default:
-          throw new Error('SMTP stage desconocido: ' + stage);
-      }
-    };
-  });
-}
+// Cliente SMTP mínimo (TLS implícito, puerto 465): lib/smtp.mjs, compartido con vuelos-tempo.mjs.
 
 async function sendBtcAlertEmail({ to, alert, snapshot }) {
   const user = process.env.SMTP_USER || '';
@@ -1654,6 +1534,7 @@ const FLIGHTS_CHECKED_MAX = 50;
 const FLIGHTS_DEFAULT_EMAIL = 'dariovillalon17@gmail.com';
 const FLIGHTS_REALERT_DROP = 0.03;          // re-avisar si baja 3% más que el último aviso
 const FLIGHTS_REALERT_AFTER_MS = 7 * 86400000; // o si pasó una semana del último aviso
+const FLIGHTS_MAIL_RETRY_MS = 7 * 86400000;   // un mail que no salió se reintenta desde la Mac durante una semana
 const IATA_RE = /^[A-Z]{3}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -1682,7 +1563,9 @@ const FLIGHTS_DEFAULT_WATCHES = [
 
 function flightsDefaults() {
   return {
-    settings: { email: FLIGHTS_DEFAULT_EMAIL, alertPct: 15, paused: false },
+    // mailVia 'mac': Render gratis bloquea SMTP (25/465/587), así que el server deja
+    // el mail pendiente y lo manda vuelos-tempo.mjs desde la Mac. 'server' = SMTP acá.
+    settings: { email: FLIGHTS_DEFAULT_EMAIL, alertPct: 15, paused: false, mailVia: 'mac' },
     watches: FLIGHTS_DEFAULT_WATCHES.map(w => ({ ...w })),
     deals: [],
     history: {},
@@ -1701,6 +1584,7 @@ function normalizeFlights(data) {
       email: typeof s.email === 'string' && s.email ? s.email : d.settings.email,
       alertPct: Number.isFinite(Number(s.alertPct)) ? Number(s.alertPct) : d.settings.alertPct,
       paused: !!s.paused,
+      mailVia: s.mailVia === 'server' ? 'server' : 'mac',
     },
     watches: Array.isArray(data.watches) ? data.watches : d.watches,
     deals: Array.isArray(data.deals) ? data.deals : [],
@@ -1908,20 +1792,33 @@ function flightsEmailText(deals) {
   return out.join('\n');
 }
 
-async function sendFlightsEmail(to, deals) {
-  const user = process.env.SMTP_USER || '';
-  const pass = process.env.SMTP_PASS || '';
-  if (!user || !pass) throw new Error('SMTP_USER y SMTP_PASS no configurados (App Password de Gmail)');
+function buildFlightsEmail(to, deals) {
   const d0 = deals[0];
   const pct = d0.normal ? Math.round((1 - d0.priceUsd / d0.normal.lo) * 100) : null;
   const subject = deals.length === 1
     ? `Vuelo barato: ${d0.title || `${d0.origin}→${d0.dest}`} ${fmtUsd(d0.priceUsd)}${pct > 0 ? ` (−${pct}%)` : ''}`
     : `${deals.length} vuelos baratos · desde ${fmtUsd(Math.min(...deals.map(d => d.priceUsd)))}`;
+  return { to, subject, text: flightsEmailText(deals) };
+}
+
+async function sendFlightsEmail(to, deals) {
+  const user = process.env.SMTP_USER || '';
+  const pass = process.env.SMTP_PASS || '';
+  if (!user || !pass) throw new Error('SMTP_USER y SMTP_PASS no configurados (App Password de Gmail)');
+  const mail = buildFlightsEmail(to, deals);
   return smtpSend({
     host: 'smtp.gmail.com', port: 465, user, pass,
     from: { address: process.env.SMTP_FROM || user, name: 'Tempo Vuelos' },
-    to, subject, text: flightsEmailText(deals),
+    to: mail.to, subject: mail.subject, text: mail.text,
   });
+}
+
+// Mails de alerta que todavía no salieron: los nuevos con mailVia 'mac' y los que
+// fallaron por SMTP (incluye entradas viejas sin `pending`). Vencen a la semana.
+const flightsLogId = (l) => l.id || ('m_' + Number(l.ts).toString(36));
+function pendingFlightMails(data, nowTs) {
+  return data.log.filter(l => !l.ok && !l.resolved && Array.isArray(l.deals) && l.deals.length
+    && nowTs - l.ts < FLIGHTS_MAIL_RETRY_MS);
 }
 
 function dueWatches(data, nowTs) {
@@ -2000,21 +1897,36 @@ async function applyFlightsReport(body) {
     for (const r of rejected) if (r.watchId && !deals.some(d => d.watchId === r.watchId)) checked.delete(r.watchId);
     for (const id of checked) watchById.get(id).lastCheckedAt = nowTs;
 
-    // El aviso queda registrado aunque falle el mail: el push de la tarea lo
-    // entrega igual y así no se repite cada corrida. El mail de vuelos no
-    // espera el backoff de BTC (son una vez por día, no cada 10 minutos).
+    // El aviso queda registrado aunque el mail no salga todavía: el push de la tarea
+    // lo entrega igual y así no se repite cada corrida. Con mailVia 'mac' el mail
+    // queda pendiente y lo manda vuelos-tempo.mjs (Render gratis bloquea SMTP).
     let emailed = false, emailError = null;
     const alertDeals = great.map(g => g.d);
     if (alertDeals.length) {
       const to = data.settings.email;
-      try { await sendFlightsEmail(to, alertDeals); emailed = true; data.stats.mailsSent += 1; }
-      catch (e) { emailError = e.message; console.warn('[flights] mail falló:', e.message); }
+      const entry = {
+        id: 'm_' + nowTs.toString(36), ts: nowTs, to, ok: false, error: null, pending: true,
+        via: data.settings.mailVia, runId,
+        deals: alertDeals.map(d => ({ id: d.id, title: d.title, priceUsd: d.priceUsd })),
+      };
+      if (data.settings.mailVia === 'server') {
+        try {
+          await sendFlightsEmail(to, alertDeals);
+          emailed = true;
+          Object.assign(entry, { ok: true, pending: false, resolved: true, sentAt: Date.now() });
+          data.stats.mailsSent += 1;
+        } catch (e) {
+          emailError = e.message;
+          entry.error = e.message;
+          console.warn('[flights] mail falló (queda pendiente para la Mac):', e.message);
+        }
+      }
       for (const g of great) {
         const la = { ts: nowTs, priceUsd: g.d.priceUsd, mailed: emailed };
         if (g.w) g.w.lastAlert = la;
         g.d.lastAlert = la;
       }
-      data.log.unshift({ ts: nowTs, to, ok: emailed, error: emailError, deals: alertDeals.map(d => ({ id: d.id, title: d.title, priceUsd: d.priceUsd })) });
+      data.log.unshift(entry);
     }
 
     const response = {
@@ -2027,6 +1939,7 @@ async function applyFlightsReport(body) {
         dates: d.legs.map(l => l.date).filter(Boolean),
       })),
       emailed, emailError,
+      mailPending: alertDeals.length > 0 && !emailed,
     };
     data.runs.unshift({
       ts: nowTs,
@@ -2917,6 +2830,10 @@ async function handleApi(req, res, parsedUrl) {
           data.settings.alertPct = p;
         }
         if (body.paused !== undefined) data.settings.paused = !!body.paused;
+        if (body.mailVia !== undefined) {
+          if (!['mac', 'server'].includes(body.mailVia)) throw new Error('mailVia tiene que ser "mac" o "server"');
+          data.settings.mailVia = body.mailVia;
+        }
         await writeFlights(data);
         return data.settings;
       });
@@ -3019,10 +2936,56 @@ async function handleApi(req, res, parsedUrl) {
     return sendJSON(res, 200, { ok: true });
   }
 
+  if (pathname === '/api/flights/mail-pending' && req.method === 'GET') {
+    const data = await readFlights();
+    const mails = pendingFlightMails(data, Date.now()).map(l => {
+      // Se arma con la oferta vigente (precio y links de hoy), no con la copia del log
+      const deals = l.deals.map(x => data.deals.find(d => d.id === x.id)).filter(Boolean);
+      return deals.length ? { id: flightsLogId(l), ...buildFlightsEmail(l.to, deals) } : null;
+    }).filter(Boolean);
+    return sendJSON(res, 200, { mails });
+  }
+
+  if (pathname === '/api/flights/mail-result' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const id = fStr(body.id, 40);
+      if (!id) return sendJSON(res, 400, { error: 'Falta id' });
+      const result = await withFlightsLock(async () => {
+        const data = await readFlights();
+        const l = data.log.find(x => flightsLogId(x) === id);
+        if (!l) return null;
+        if (l.ok) return { ok: true, already: true }; // reintento del POST: no contar dos veces
+        const nowTs = Date.now();
+        l.id = id;
+        l.via = 'mac';
+        if (body.ok === true) {
+          Object.assign(l, { ok: true, error: null, pending: false, resolved: true, sentAt: nowTs });
+          data.stats.mailsSent += 1;
+          const ids = new Set(l.deals.map(x => x.id));
+          for (const d of data.deals) if (ids.has(d.id) && d.lastAlert) d.lastAlert.mailed = true;
+          for (const w of data.watches) if (ids.has(w.id) && w.lastAlert) w.lastAlert.mailed = true;
+        } else {
+          l.error = fStr(body.error, 300) || 'falló el envío desde la Mac';
+          l.pending = true;
+        }
+        await writeFlights(data);
+        return { ok: true };
+      });
+      if (!result) return sendJSON(res, 404, { error: 'Mail no encontrado' });
+      return sendJSON(res, 200, result);
+    } catch (e) {
+      return sendJSON(res, 400, { error: e.message });
+    }
+  }
+
   if (pathname === '/api/flights/test-email' && req.method === 'POST') {
     try {
       const body = await readBody(req).catch(() => ({}));
       const data = await readFlights();
+      if (data.settings.mailVia === 'mac') {
+        return sendJSON(res, 409, { error: 'Los mails los manda la Mac. Probalo desde la carpeta de Tempo con: node vuelos-tempo.mjs test-mail' });
+      }
       const to = (body.to || data.settings.email || '').trim();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return sendJSON(res, 400, { error: 'Email inválido' });
       await sendFlightsEmail(to, [{

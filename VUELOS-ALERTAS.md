@@ -11,16 +11,23 @@ Tarea 9:00 (Mac) ──► node vuelos-tempo.mjs due ──► rutas que tocan h
       ├─ por ruta: Google Flights ─► Opciones de reserva ─► página del vendedor (precio final)
       │
       └─► node vuelos-tempo.mjs report archivo.json ──► POST /api/flights/report (Render)
-                                                         ├─ guarda oferta + historial
-                                                         ├─ mail si es "muy buena"
-                                                         └─ devuelve alertas ─► push al celular
+                │                                        ├─ guarda oferta + historial
+                │                                        ├─ deja el mail pendiente si es "muy buena"
+                │                                        └─ devuelve alertas ─► push al celular
+                └─► GET /api/flights/mail-pending ─► Gmail SMTP desde la Mac
+                    └─► POST /api/flights/mail-result (Tempo anota si salió)
 ```
+
+Render gratis bloquea los puertos SMTP (25/465/587) desde el 26-sep-2025, por eso el mail lo
+manda la Mac con `SMTP_USER`/`SMTP_PASS` del `.env`. Si algún día Render pasa a pago, en la
+pestaña se puede cambiar "Quién manda el mail" a "El server".
 
 | Pieza | Lee de | Escribe en | Para qué |
 |---|---|---|---|
 | Tarea programada `vuelos-alertas` | `/api/flights/due`, Chrome | archivo JSON temporal | validar precios en el navegador |
-| `vuelos-tempo.mjs` | `.env` (TEMPO_PASSWORD) | `/api/flights/report` | subir lo validado |
-| `server.js` (sección Vuelos) | fila kv `flights` (Neon) | fila kv `flights`, mail SMTP | guardar, historial, mail |
+| `vuelos-tempo.mjs` | `.env` (TEMPO_PASSWORD, SMTP_*) | `/api/flights/report`, `/mail-result`, Gmail | subir lo validado y mandar los mails |
+| `server.js` (sección Vuelos) | fila kv `flights` (Neon) | fila kv `flights` | guardar, historial, mails pendientes |
+| `lib/smtp.mjs` | — | Gmail SMTP | cliente SMTP compartido (server y script) |
 | `public/js/views/flights.js` | `/api/flights` | `/api/flights/watches`, `/settings` | ver ofertas y editar rutas |
 
 ## Qué es "muy buena"
@@ -29,8 +36,8 @@ Precio validado al menos `alertPct`% (15 por defecto) debajo del **piso** del ra
 muestra Google ("suelen valer entre USD X–Y"), o debajo del tope en USD de la ruta (`maxUsd`).
 Un multidestino no tiene rango de Google: avisa solo si baja de su `maxUsd`. No se repite el aviso
 salvo que baje 3% más o pase una semana, aunque el mail haya fallado (el push ya avisó).
-Mail: lo manda el server (Gmail SMTP, igual que BTC Alerts). Push: lo manda la tarea con la
-herramienta PushNotification. "Pausar avisos" en la pestaña frena mail y push, no los chequeos.
+Mail: lo manda `vuelos-tempo.mjs` desde la Mac al terminar el `report` (y reintenta durante una
+semana los que no salieron). Push: lo manda la tarea con la herramienta PushNotification. "Pausar avisos" en la pestaña frena mail y push, no los chequeos.
 
 ## Protocolo de la tarea (seguirlo al pie de la letra)
 
@@ -107,9 +114,15 @@ herramienta PushNotification. "Pausar avisos" en la pestaña frena mail y push, 
    - Salida 3 = el server rechazó ofertas (`rejected`, con el motivo). Corregí esas ofertas y subilas
      en un archivo nuevo. Esas rutas no quedan como chequeadas hasta que llegue una válida.
    - `duplicate: true` = ese mismo archivo ya se había subido; no lo cuentes dos veces.
+   - `macMail` dice cuántos mails salieron desde la Mac (`sent`) y cuáles fallaron (`failed`).
    - Si `alerts` no está vacío, mandar **un** push: "Vuelo barato: <título> USD <precio> (<fechas>).
      Detalle en Tempo › Vuelos." Si `emailed` es false, agregar "(el mail falló)".
    - Si la subida falló (salida 1), push con el error corto. Si no hay alertas, no mandar push.
+
+## Mails a mano
+
+- `node vuelos-tempo.mjs mail-pending`: reintenta los mails de alerta que no salieron.
+- `node vuelos-tempo.mjs test-mail`: manda un mail de prueba desde la Mac al mail de la pestaña.
 
 ## Probar sin tocar la nube
 
