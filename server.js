@@ -1415,7 +1415,9 @@ async function fetchBtcPrice() {
 const DOLARHOY_URL = 'https://dolarhoy.com/cotizacion-dolar-blue';
 const DOLARAPI_URL = 'https://dolarapi.com/v1/dolares/blue';
 const DOLAR_TTL_MS = 10 * 60 * 1000;
+const DOLAR_STALE_MAX_MS = 24 * 60 * 60 * 1000;
 let lastDolarBlue = null;
+let dolarInFlight = null;
 
 // "$1.535,00" -> 1535
 const parseArs = (s) => Number(String(s).replace(/[^\d,]/g, '').replace(',', '.'));
@@ -2724,9 +2726,16 @@ async function handleApi(req, res, parsedUrl) {
   // ---- Dólar blue promedio (para pasar pesos a dólares en Empleado) ----
   if (pathname === '/api/dolar/blue' && req.method === 'GET') {
     try {
-      if (!lastDolarBlue || (Date.now() - lastDolarBlue.fetchedAt) > DOLAR_TTL_MS) lastDolarBlue = await fetchDolarBlue();
+      if (!lastDolarBlue || (Date.now() - lastDolarBlue.fetchedAt) > DOLAR_TTL_MS) {
+        dolarInFlight ||= fetchDolarBlue().finally(() => { dolarInFlight = null; });
+        lastDolarBlue = await dolarInFlight;
+      }
       return sendJSON(res, 200, { ok: true, quote: lastDolarBlue });
     } catch (e) {
+      // Las dos fuentes caídas: sirve la última cotización si es de las últimas 24 h
+      if (lastDolarBlue && Date.now() - lastDolarBlue.fetchedAt < DOLAR_STALE_MAX_MS) {
+        return sendJSON(res, 200, { ok: true, quote: { ...lastDolarBlue, stale: true } });
+      }
       return sendJSON(res, 502, { error: `No pude leer el dólar blue: ${e.message}` });
     }
   }

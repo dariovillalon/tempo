@@ -1,5 +1,6 @@
 // payroll.js — Empleado: el sueldo como cuenta corriente en dólares.
-// Cada mes: deuda al inicio + sueldo − adelantos − gastos = saldo a pagar; lo
+// Cada mes: deuda al inicio + sueldo − adelantos − gastos (+ lo que la persona
+// te devuelva) = saldo a pagar; lo
 // que no se paga al cierre pasa como deuda al mes siguiente. Saldo > 0 = le
 // debés a la persona; < 0 = te debe. Cada monto en pesos guarda el dólar blue
 // promedio (DolarHoy) del día en que se cargó y se convierte siempre con ese.
@@ -12,7 +13,8 @@ import { createPdf, fitText } from '../pdf.js';
 
 const MESES = ['', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 const LISTS = [['advances', 'Adelantos recibidos', 'Plata que le diste durante el mes. Se descuenta del sueldo.'],
-  ['expenses', 'Gastos del mes', 'Gastos suyos que pagaste vos. Se descuentan del sueldo.']];
+  ['expenses', 'Gastos del mes', 'Gastos suyos que pagaste vos. Se descuentan del sueldo.'],
+  ['repayments', 'Devoluciones', 'Plata que la persona te devolvió. Baja lo que te debe.']];
 const BLUE_TTL_MS = 10 * 60 * 1000;
 
 let activeId = null;    // persona elegida (por pestaña)
@@ -24,11 +26,12 @@ const lastCur = {};     // última moneda usada al agregar, por lista
 
 // ----- Números y fechas -----
 const r2 = (n) => Math.round(n * 100) / 100;
-// Acepta "700.000", "700000", "1.234,50" y "500.5"
+// Acepta "700.000", "700000", "1.234,50", "500.5" y "1,234.56" (teclado en inglés)
 const parseAmount = (raw) => {
   let s = String(raw ?? '').trim().replace(/[^\d.,]/g, '');
   if (!s) return NaN;
-  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  if (s.includes(',') && s.includes('.')) s = s.lastIndexOf(',') > s.lastIndexOf('.') ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+  else if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
   else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '');
   return Number(s);
 };
@@ -71,10 +74,11 @@ const ledger = (p) => {
     const adelantos = sumUsd(m.advances);
     const gastos = sumUsd(m.expenses);
     const pagado = toUsd(m.paid) || 0;
-    const saldo = r2(bal + sueldo - adelantos - gastos);
+    const devoluciones = sumUsd(m.repayments);
+    const saldo = r2(bal + sueldo - adelantos - gastos + devoluciones);
     const cierre = r2(saldo - pagado);
-    const missing = [m.salary, ...(m.advances || []), ...(m.expenses || []), m.paid].filter(isMissing).length;
-    months[k] = { inicio: bal, sueldo, adelantos, gastos, saldo, pagado, cierre, missing, missingBefore };
+    const missing = [m.salary, ...(m.advances || []), ...(m.expenses || []), ...(m.repayments || []), m.paid].filter(isMissing).length;
+    months[k] = { inicio: bal, sueldo, adelantos, gastos, devoluciones, saldo, pagado, cierre, missing, missingBefore };
     missingBefore += missing;
     bal = cierre;
   }
@@ -171,14 +175,16 @@ const delItem = (pid, key, list, iid) => {
 
 // Monto editable: 'opening' y 'base' son de la persona; 'salary', 'paid' y las
 // listas, del mes. 'base' es el sueldo que se copia al abrir cada mes (sin cotización).
-const moneyTarget = (s, pid, key, scope, iid) => {
+// Solo crea el objeto que falta con `create` (dentro de mutate); si no, devuelve un default suelto.
+const moneyTarget = (s, pid, key, scope, iid, create = false) => {
   const p = findPerson(s, pid);
   if (!p) return null;
-  if (scope === 'opening') return (p.opening ||= { amount: 0, cur: 'USD', rate: null, favor: 'persona' });
-  if (scope === 'base') return (p.salary ||= { amount: 0, cur: 'ARS' });
+  const slot = (obj, field, def) => obj[field] || (create ? (obj[field] = def) : def);
+  if (scope === 'opening') return slot(p, 'opening', { amount: 0, cur: 'USD', rate: null, favor: 'persona' });
+  if (scope === 'base') return slot(p, 'salary', { amount: 0, cur: 'ARS' });
   const m = p.months?.[key];
   if (!m) return null;
-  if (scope === 'salary' || scope === 'paid') return (m[scope] ||= { amount: 0, cur: 'ARS', rate: null });
+  if (scope === 'salary' || scope === 'paid') return slot(m, scope, { amount: 0, cur: 'ARS', rate: null });
   return (m[scope] || []).find((i) => i.id === iid) || null;
 };
 
@@ -198,7 +204,7 @@ const editMoney = async (root, ds, raw) => {
   const amount = f === 'amount' ? v : t0.amount;
   const rate = scope !== 'base' && f !== 'rate' && cur === 'ARS' && amount > 0 && !(t0.rate > 0) ? await getBlueRate() : null;
   mutate((s) => {
-    const t = moneyTarget(s, pid, key, scope, iid);
+    const t = moneyTarget(s, pid, key, scope, iid, true);
     if (!t) return;
     t[f] = v;
     if (rate) t.rate = rate;
@@ -289,6 +295,7 @@ const summaryCard = (p, key, c) => {
     ${sumRow('+ Sueldo', fmtUsd(c.sueldo))}
     ${sumRow('− Adelantos recibidos', fmtUsd(c.adelantos))}
     ${sumRow('− Gastos del mes', fmtUsd(c.gastos))}
+    ${c.devoluciones ? sumRow('+ Devoluciones', fmtUsd(c.devoluciones), `${p.name || 'la persona'} te devolvió`) : ''}
     ${sumRow('Saldo a pagar', fmtUsd(c.saldo), favorTxt(c.saldo, p), 'is-total')}
     ${sumRow('− Pagado al cierre', fmtUsd(c.pagado))}
     ${sumRow('Deuda al cierre', fmtUsd(c.cierre), `${favorTxt(c.cierre, p)} · pasa a ${next}`, 'is-total')}
@@ -348,7 +355,7 @@ export const renderPayroll = (root) => {
         <div class="card-title">Sueldo de ${monthLabel(key)}</div>
         <div class="pay-line" style="margin-top:8px">${moneyFields(m.salary || { amount: 0, cur: 'ARS' }, 'data-scope="salary"')}</div>
       </div>
-      ${LISTS.map((l) => listCard(p, key, m, l)).join('')}
+      ${LISTS.filter(([list]) => list !== 'repayments' || m.repayments?.length || c.inicio < 0 || c.saldo < 0).map((l) => listCard(p, key, m, l)).join('')}
       <div class="card">
         <div class="card-title">Pagado al cierre</div>
         <div class="muted text-xs" style="margin:2px 0 8px">Lo que le pagaste al cerrar el mes. La diferencia con el saldo pasa como deuda a ${monthLabel(shiftMonth(key, 1))}.</div>
@@ -456,6 +463,7 @@ const buildSummaryPdf = (p, key, c, title) => {
   row('+ Sueldo', fmtUsd(c.sueldo));
   row('- Adelantos recibidos', fmtUsd(c.adelantos));
   row('- Gastos del mes', fmtUsd(c.gastos));
+  if (c.devoluciones) row('+ Devoluciones', fmtUsd(c.devoluciones));
   row('Saldo a pagar', fmtUsd(c.saldo), favorTxt(c.saldo, p), true);
   row('- Pagado al cierre', fmtUsd(c.pagado));
   row('Deuda al cierre', fmtUsd(c.cierre), `${favorTxt(c.cierre, p)}, pasa a ${monthLabel(shiftMonth(key, 1))}`, true);
@@ -495,6 +503,7 @@ const buildSummaryPdf = (p, key, c, title) => {
   section('Sueldo', m.salary?.amount > 0 ? [{ ...m.salary, date: '', desc: `Sueldo de ${monthLabel(key)}` }] : [], c.sueldo);
   section('Adelantos recibidos', byDate('advances'), c.adelantos);
   section('Gastos del mes', byDate('expenses'), c.gastos);
+  if (m.repayments?.length) section('Devoluciones', byDate('repayments'), c.devoluciones);
   section('Pagado al cierre', m.paid?.amount > 0 ? [{ ...m.paid, date: m.paidDate || '', desc: 'Pago al cierre del mes' }] : [], c.pagado);
 
   ensure(30);

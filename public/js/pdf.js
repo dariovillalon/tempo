@@ -98,7 +98,8 @@ export const createPdf = ({ title = '' } = {}) => {
       });
       objs[catalogId - 1] = `<< /Type /Catalog /Pages ${pagesId} 0 R >>`;
       objs[pagesId - 1] = `<< /Type /Pages /Kids [${kids.map((k) => `${k} 0 R`).join(' ')}] /Count ${kids.length} >>`;
-      const infoId = add(`<< /Title (${pdfStr(title)}) /Producer (Tempo) >>`);
+      // El /Title va en PDFDocEncoding, que no coincide con WinAnsi en 0x80-0x9F.
+      const infoId = add(`<< /Title (${pdfStr(title).replace(/[\x80-\x9F]/g, '-')}) /Producer (Tempo) >>`);
 
       let out = '%PDF-1.4\n%\xE2\xE3\xCF\xD3\n';
       const offsets = objs.map((body, i) => {
