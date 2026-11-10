@@ -238,6 +238,8 @@ export const state = {
   mytime: defaultMyTime(),
   bills: [],   // cuentas por pagar: { id, name, amount, frequency, dueDay, payMethod, url, notes, paidMonths:[] }
   promos: [],  // promociones/cupones: { id, name, source, card, benefit, cadence, validUntil, usedDates:[], notes, url }
+  // Empleado: { people: [{ id, name, salary:{amount,cur}, opening:{amount,cur,rate,favor}, months:{ 'YYYY-MM': { salary, advances:[], expenses:[], paid } } }] }
+  payroll: { people: [] },
   reviews: [], // cierres semanales: { id, weekOf (lunes YYYY-MM-DD), done:[], hoursByProject, answers:{}, statusMarkdown, createdAt }
   vault: null,
   lastUsed: { projectId: null, view: 'today' },
@@ -312,6 +314,7 @@ const buildPayload = (src = state) => ({
   bills: src.bills,
   billsSeedVersion: src.billsSeedVersion,
   promos: src.promos,
+  payroll: src.payroll,
   reviews: src.reviews,
   lastUsed: src.lastUsed,
 });
@@ -527,6 +530,9 @@ export const initState = async () => {
       state.billsSeedVersion = BILLS_SEED_VERSION;
     }
     if (!Array.isArray(state.promos)) state.promos = [];
+    // Empleado (sueldo como cuenta corriente)
+    state.payroll ||= { people: [] };
+    if (!Array.isArray(state.payroll.people)) state.payroll.people = [];
     // Cierres semanales (reviews) — backfill para estados anteriores
     if (!Array.isArray(state.reviews)) state.reviews = [];
     // Migrate legacy whiteboards: notes[] → items[] with type='sticky'.
@@ -583,6 +589,8 @@ export const reloadState = async () => {
     state.fitness ||= {}; state.fitness.days ||= {};
     state.mytime ||= {}; state.mytime.days ||= {};
     if (!Array.isArray(state.reviews)) state.reviews = [];
+    state.payroll ||= { people: [] };
+    if (!Array.isArray(state.payroll.people)) state.payroll.people = [];
     notify('change');
     return true;
   } catch (e) { console.warn('reloadState failed', e); return false; }

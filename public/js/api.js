@@ -104,6 +104,7 @@ export const api = {
 
   // BTC price alerts
   getBtcPrice:    () => fetch('/api/btc/price').then(json),
+  getDolarBlue:   () => fetch('/api/dolar/blue').then(json),
   listBtcAlerts:  () => fetch('/api/btc/alerts').then(json),
   createBtcAlert: (data) => fetch('/api/btc/alerts', {
                     method: 'POST',
