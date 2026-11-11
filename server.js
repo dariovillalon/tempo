@@ -1409,6 +1409,51 @@ async function fetchBtcPrice() {
   }
 }
 
+// ---- Dólar blue (vista Empleado) ----
+// Fuente principal: la página de DolarHoy (lo que mira Dario). Si cambia el HTML
+// o bloquean la IP de Render, cae a DolarApi, que publica la misma cotización.
+const DOLARHOY_URL = 'https://dolarhoy.com/cotizacion-dolar-blue';
+const DOLARAPI_URL = 'https://dolarapi.com/v1/dolares/blue';
+const DOLAR_TTL_MS = 10 * 60 * 1000;
+const DOLAR_STALE_MAX_MS = 24 * 60 * 60 * 1000;
+let lastDolarBlue = null;
+let dolarInFlight = null;
+
+// "$1.535,00" -> 1535
+const parseArs = (s) => Number(String(s).replace(/[^\d,]/g, '').replace(',', '.'));
+const validQuote = (compra, venta) =>
+  Number.isFinite(compra) && Number.isFinite(venta) && compra > 0 && venta >= compra && venta < 1e6;
+
+async function fetchWithTimeout(url, headers) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const res = await fetch(url, { headers, signal: ctrl.signal });
+    if (!res.ok) { res.body?.cancel(); throw new Error(`HTTP ${res.status}`); }
+    return await res.text();
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function fetchDolarBlue() {
+  const quote = (compra, venta, source) => ({
+    compra, venta, promedio: Math.round((compra + venta) / 2 * 100) / 100, source, fetchedAt: Date.now(),
+  });
+  try {
+    const html = await fetchWithTimeout(DOLARHOY_URL, { 'User-Agent': 'Mozilla/5.0 (Tempo)', 'Accept': 'text/html' });
+    const m = html.match(/Compra<\/div>\s*<div class="value">([^<]+)<[\s\S]*?Venta<\/div>\s*<div class="value">([^<]+)</);
+    const compra = m && parseArs(m[1]); const venta = m && parseArs(m[2]);
+    if (!validQuote(compra, venta)) throw new Error('no encontré compra/venta en la página');
+    return quote(compra, venta, 'DolarHoy');
+  } catch (e) {
+    console.warn('[dolar] DolarHoy falló, pruebo DolarApi:', e.message);
+    const j = JSON.parse(await fetchWithTimeout(DOLARAPI_URL, { 'Accept': 'application/json', 'User-Agent': 'Tempo/2.0' }));
+    if (!validQuote(j?.compra, j?.venta)) throw new Error('DolarApi: respuesta inesperada');
+    return quote(j.compra, j.venta, 'DolarApi');
+  }
+}
+
 // Cliente SMTP mínimo (TLS implícito, puerto 465): lib/smtp.mjs, compartido con vuelos-tempo.mjs.
 
 function buildBtcAlertEmail({ to, alert, snapshot }) {
@@ -2675,6 +2720,23 @@ async function handleApi(req, res, parsedUrl) {
       });
     } catch (e) {
       return sendJSON(res, 400, { error: e.message });
+    }
+  }
+
+  // ---- Dólar blue promedio (para pasar pesos a dólares en Empleado) ----
+  if (pathname === '/api/dolar/blue' && req.method === 'GET') {
+    try {
+      if (!lastDolarBlue || (Date.now() - lastDolarBlue.fetchedAt) > DOLAR_TTL_MS) {
+        dolarInFlight ||= fetchDolarBlue().finally(() => { dolarInFlight = null; });
+        lastDolarBlue = await dolarInFlight;
+      }
+      return sendJSON(res, 200, { ok: true, quote: lastDolarBlue });
+    } catch (e) {
+      // Las dos fuentes caídas: sirve la última cotización si es de las últimas 24 h
+      if (lastDolarBlue && Date.now() - lastDolarBlue.fetchedAt < DOLAR_STALE_MAX_MS) {
+        return sendJSON(res, 200, { ok: true, quote: { ...lastDolarBlue, stale: true } });
+      }
+      return sendJSON(res, 502, { error: `No pude leer el dólar blue: ${e.message}` });
     }
   }
 
