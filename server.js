@@ -1635,6 +1635,7 @@ const FLIGHTS_DEFAULT_WATCHES = [
   active: true,
   note: null,
   lastCheckedAt: null,
+  lastValidatedAt: null,
   lastAlert: null,
 }));
 
@@ -1652,6 +1653,13 @@ function flightsDefaults() {
   };
 }
 
+// Último precio validado de una ruta según su historial (para datos anteriores a lastValidatedAt).
+function lastHistoryTs(history, id) {
+  const h = history && Array.isArray(history[id]) ? history[id] : [];
+  const ts = h.map(e => fTs(e?.ts)).filter(Number.isFinite);
+  return ts.length ? Math.max(...ts) : null;
+}
+
 function normalizeFlights(data) {
   const d = flightsDefaults();
   if (!data || typeof data !== 'object') return d;
@@ -1663,7 +1671,8 @@ function normalizeFlights(data) {
       paused: !!s.paused,
       mailVia: s.mailVia === 'server' ? 'server' : 'mac',
     },
-    watches: Array.isArray(data.watches) ? data.watches : d.watches,
+    watches: (Array.isArray(data.watches) ? data.watches : d.watches).map(w => (
+      w && w.lastValidatedAt === undefined ? { ...w, lastValidatedAt: lastHistoryTs(data.history, w.id) } : w)),
     deals: Array.isArray(data.deals) ? data.deals : [],
     history: data.history && typeof data.history === 'object' && !Array.isArray(data.history) ? data.history : {},
     runs: Array.isArray(data.runs) ? data.runs : [],
@@ -1731,7 +1740,7 @@ function sanitizeWatchInput(body, base) {
     id: 'w_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     kind: 'roundtrip', region: null, beach: false, active: true, note: null,
     window: { from: null, to: null }, nights: { min: 7, max: 14 }, everyDays: 2, maxUsd: null,
-    lastCheckedAt: null, lastAlert: null,
+    lastCheckedAt: null, lastValidatedAt: null, lastAlert: null,
   };
   if (body.origin !== undefined) { const o = fIata(body.origin); if (!o) throw new Error('Origen inválido (código IATA de 3 letras)'); w.origin = o; }
   if (body.dest !== undefined) { const d = fIata(body.dest); if (!d) throw new Error('Destino inválido (código IATA de 3 letras)'); w.dest = d; }
@@ -1929,11 +1938,22 @@ function planPendingMails(data, nowTs) {
   return { mails, stale };
 }
 
+// Toca chequear una ruta cuando su precio validado venció (everyDays) y no se
+// intentó en la última corrida. Un intento fallido (Chrome sin conectar, página
+// del vendedor con error) no renueva el precio: la ruta vuelve a la corrida
+// siguiente en vez de esperar everyDays. El margen de 3 h absorbe el jitter de la tarea.
+const FLIGHTS_DAY_MS = 86400000;
+const FLIGHTS_SLACK_MS = 3 * 3600000;
+const FLIGHTS_MULTI_EVERY_DAYS = 7;
 function dueWatches(data, nowTs) {
-  return data.watches.filter(w => w.active && (
-    !w.lastCheckedAt || (nowTs - w.lastCheckedAt) >= (w.everyDays || 2) * 86400000 - 3 * 3600000
-  ));
+  return data.watches.filter(w => w.active
+    && (!w.lastValidatedAt || nowTs - w.lastValidatedAt >= (w.everyDays || 2) * FLIGHTS_DAY_MS - FLIGHTS_SLACK_MS)
+    && (!w.lastCheckedAt || nowTs - w.lastCheckedAt >= FLIGHTS_DAY_MS - FLIGHTS_SLACK_MS));
 }
+const multiDue = (d, nowTs) => {
+  const v = fTs(d.validatedAt);
+  return !v || nowTs - v >= FLIGHTS_MULTI_EVERY_DAYS * FLIGHTS_DAY_MS - FLIGHTS_SLACK_MS;
+};
 
 // Integra un reporte de la tarea diaria. Devuelve el resumen para la tarea
 // (que decide el push con `alerts`). Idempotente por runId: el CLI reintenta
@@ -1985,6 +2005,7 @@ async function applyFlightsReport(body) {
       if (!w && d.maxUsd == null && prevDeal?.maxUsd) d.maxUsd = prevDeal.maxUsd;
       if (w) {
         checked.add(w.id);
+        w.lastValidatedAt = nowTs;
         if (!d.destName) d.destName = w.destName;
         if (!d.beach && w.beach) d.beach = true;
         if (!d.region) d.region = w.region;
@@ -2969,16 +2990,17 @@ async function handleApi(req, res, parsedUrl) {
 
   if (pathname === '/api/flights/due' && req.method === 'GET') {
     const data = await readFlights();
+    const nowTs = Date.now();
     return sendJSON(res, 200, {
       settings: data.settings,
       // Pausar frena solo los avisos (mail y push): los precios se siguen chequeando
-      due: dueWatches(data, Date.now()),
+      due: dueWatches(data, nowTs),
       // Lo último validado por seguimiento, para que la tarea compare
       last: Object.fromEntries(data.watches.map(w => {
         const h = data.history[w.id];
         return [w.id, Array.isArray(h) && h.length ? h[h.length - 1] : null];
       })),
-      multi: data.deals.filter(d => d.kind === 'multi').map(d => ({ id: d.id, title: d.title, priceUsd: d.priceUsd, maxUsd: d.maxUsd ?? null, legs: d.legs, seller: d.seller, validatedAt: d.validatedAt })),
+      multi: data.deals.filter(d => d.kind === 'multi').map(d => ({ id: d.id, title: d.title, priceUsd: d.priceUsd, maxUsd: d.maxUsd ?? null, legs: d.legs, seller: d.seller, validatedAt: d.validatedAt, due: multiDue(d, nowTs) })),
     });
   }
 
@@ -3073,10 +3095,12 @@ async function handleApi(req, res, parsedUrl) {
           // Otra ruta: el historial, la oferta y el último aviso eran de la anterior
           w.lastAlert = null;
           w.lastCheckedAt = null;
+          w.lastValidatedAt = null;
           delete data.history[id];
           data.deals = data.deals.filter(d => d.watchId !== id);
         } else if (JSON.stringify(w.window) !== JSON.stringify(before.window) || JSON.stringify(w.nights) !== JSON.stringify(before.nights)) {
           w.lastCheckedAt = null; // que el próximo chequeo busque con las fechas nuevas
+          w.lastValidatedAt = null;
         }
         if (body.resetAlert === true) w.lastAlert = null;
         data.watches[idx] = w;
