@@ -49,9 +49,10 @@ Push: lo manda la tarea con la herramienta PushNotification. "Pausar avisos" en 
 
 1. Correr `node vuelos-tempo.mjs due` en esta carpeta. Si falla, mandar push "Chequeo de vuelos:
    no pude leer Tempo (<error>)" y terminar.
-2. Tomar como máximo **4 rutas** de `due` (las que hace más que no se chequean primero). Los
-   lunes, además, revalidar hasta **3 ofertas `multi`** de `due.multi` (las de `validatedAt` más
-   viejo primero), con los mismos tramos y fechas, en la página de cada vendedor.
+2. Tomar como máximo **4 rutas** de `due` (las de `lastValidatedAt` más viejo primero; `null`
+   primero). Además, revalidar hasta **3 ofertas `multi`** de `due.multi` que tengan `due: true`
+   (las de `validatedAt` más viejo primero), con los mismos tramos y fechas, en la página de cada
+   vendedor. Una multi toca cada 7 días desde su última validación.
 3. Por cada ruta (`origin`, `dest`, `window`, `nights`):
    - Abrir Google Flights con
      `https://www.google.com/travel/flights?q=Flights%20from%20<ORIG>%20to%20<DEST>%20on%20<IDA>%20through%20<VUELTA>&curr=USD&hl=es-419&gl=AR`
@@ -108,7 +109,9 @@ Push: lo manda la tarea con la herramienta PushNotification. "Pausar avisos" en 
 }
 ```
 
-   - `checked` lleva todas las rutas que se intentaron (validadas o no), así no se repiten mañana.
+   - `checked` lleva todas las rutas que se intentaron (validadas o no), así no se repiten el
+     mismo día. Solo una oferta validada renueva el precio de la ruta: lo que quedó en `failures`
+     (o sin oferta) vuelve a `due` en la corrida siguiente.
    - **Una sola oferta por `watchId`**: la más barata que validaste. Si mandás más, el server se
      queda con la más barata.
    - `priceUsd` (y los precios de los tramos) son **números JSON con punto decimal** (`558.9`), nunca

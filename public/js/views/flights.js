@@ -9,6 +9,11 @@ import { api } from '../api.js';
 import { escapeHtml, sanitizeUrl, relTime } from '../utils.js';
 import { toast } from '../components/toast.js';
 
+const ago = (ts) => { const r = relTime(ts); return r === 'recién' ? 'recién' : `hace ${r}`; };
+// Intento posterior al último precio validado. El margen de 1 h cubre que la hora
+// de validación la anota la tarea y la del intento el server (difieren unos minutos).
+const failedAfter = (w) => !!w.lastCheckedAt && w.lastCheckedAt > (w.lastValidatedAt || 0) + 3600000;
+
 const STALE_MS = 72 * 3600 * 1000;      // un precio de hace más de 3 días ya no es confiable
 const REFETCH_MS = 15 * 1000; // al entrar a la vista, datos de hace más de 15 s se piden de nuevo
 const ORIGINS = [
@@ -329,7 +334,7 @@ const renderWatch = (w) => {
     </div>
     <div class="fl-watch-last fl-small">
       ${last ? `${fmtUsd(last.priceUsd)}<br><span class="muted">${fmtRange(last.out, last.ret)}</span>` : '<span class="muted">Sin precio todavía</span>'}
-      <br><span class="muted">${w.lastCheckedAt ? `chequeada hace ${relTime(w.lastCheckedAt)}` : 'nunca chequeada'}</span>
+      <br><span class="muted">${w.lastValidatedAt ? `validado ${ago(w.lastValidatedAt)}` : 'nunca validado'}${failedAfter(w) ? ` · último intento sin validar ${ago(w.lastCheckedAt)}` : ''}</span>
     </div>
     <div class="fl-watch-act">
       <label class="fl-check" title="Activa"><input type="checkbox" data-act="toggle-watch" data-id="${escapeHtml(w.id)}" ${w.active ? 'checked' : ''}> Activa</label>
