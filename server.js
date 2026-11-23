@@ -1854,12 +1854,24 @@ function shouldRealert(lastAlert, deal, nowTs) {
 const fmtUsd = (n) => 'USD ' + Number(n).toLocaleString('es-AR', { maximumFractionDigits: 2 });
 const fmtArs = (n) => 'ARS ' + Number(n).toLocaleString('es-AR', { maximumFractionDigits: 0 });
 
+// Noches entre la primera y la última fecha de los tramos; null si faltan fechas o no cierran.
+// Va en el mail porque con solo las fechas "13-jul … 17-ago" se lee fácil como 4 días.
+function dealNights(d) {
+  const dates = (d.legs || []).map(l => l.date).filter(s => typeof s === 'string' && DATE_RE.test(s));
+  if (dates.length < 2) return null;
+  const n = Math.round((Date.parse(dates[dates.length - 1]) - Date.parse(dates[0])) / FLIGHTS_DAY_MS);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+const fmtNights = (n) => `${n} ${n === 1 ? 'noche' : 'noches'}`;
+
 function flightsEmailText(deals) {
   const out = [deals.length === 1 ? 'Apareció un vuelo muy barato.' : `Aparecieron ${deals.length} vuelos muy baratos.`, ''];
   for (const d of deals) {
     const route = d.legs.length ? d.legs.map(l => `${l.from}→${l.to}`).join(', ') : `${d.origin}→${d.dest}`;
     out.push(`■ ${d.title || route}`);
     out.push(`  Precio:   ${d.approx ? '≈ ' : ''}${fmtUsd(d.priceUsd)}${d.priceArs ? ` (${fmtArs(d.priceArs)})` : ''} ${d.kind === 'multi' ? 'total del multidestino' : 'ida y vuelta'}, 1 adulto`);
+    const nights = dealNights(d);
+    if (nights) out.push(`  Estadía:  ${fmtNights(nights)}${d.kind === 'multi' ? ' en total' : ''}`);
     if (d.normal) {
       const pct = Math.round((1 - d.priceUsd / d.normal.lo) * 100);
       out.push(`  Normal:   ${fmtUsd(d.normal.lo)}–${fmtUsd(d.normal.hi).replace('USD ', '')} según Google${pct > 0 ? ` (${pct}% debajo del piso)` : ''}`);
@@ -1881,8 +1893,9 @@ function flightsEmailText(deals) {
 function buildFlightsEmail(to, deals) {
   const d0 = deals[0];
   const pct = d0.normal ? Math.round((1 - d0.priceUsd / d0.normal.lo) * 100) : null;
+  const nights0 = dealNights(d0);
   const subject = deals.length === 1
-    ? `Vuelo barato: ${d0.title || `${d0.origin}→${d0.dest}`} ${fmtUsd(d0.priceUsd)}${pct > 0 ? ` (−${pct}%)` : ''}`
+    ? `Vuelo barato: ${d0.title || `${d0.origin}→${d0.dest}`} ${fmtUsd(d0.priceUsd)}${pct > 0 ? ` (−${pct}%)` : ''}${nights0 ? ` · ${fmtNights(nights0)}` : ''}`
     : `${deals.length} vuelos baratos · desde ${fmtUsd(Math.min(...deals.map(d => d.priceUsd)))}`;
   return { to, subject, text: flightsEmailText(deals) };
 }
