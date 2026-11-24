@@ -164,7 +164,9 @@ const main = async () => {
     if (event === 'init' || event === 'save-status') return;
     if (refreshScheduled) return;
     refreshScheduled = true;
-    setTimeout(() => {
+    const run = () => {
+      // Arrastrando en Pendientes: esperar a que suelte (redibujar en el medio pierde el arrastre)
+      if (document.body.classList.contains('todo-dragging')) { setTimeout(run, 150); return; }
       refreshScheduled = false;
       const view = router.current().split('/')[0];
       if (!view || view === 'pomodoro') return;
@@ -175,7 +177,8 @@ const main = async () => {
       const top = sc ? sc.scrollTop : 0;
       router.refresh();
       if (sc) { sc.scrollTop = top; requestAnimationFrame(() => { sc.scrollTop = top; }); }
-    }, 0);
+    };
+    setTimeout(run, 0);
   });
 
   // Helpful shortcut: open Quick Capture from search field everywhere
@@ -232,10 +235,13 @@ const main = async () => {
   const resync = async () => {
     if (document.hidden) return;
     if (getSaveStatus() === 'saving') return;
+    // Arrastrando en Pendientes: redibujar en el medio pierde el arrastre (resincroniza la próxima vez)
+    if (document.body.classList.contains('todo-dragging')) return;
     if (Date.now() - _lastResync < 2000) return;
     _lastResync = Date.now();
     const ok = await reloadState();
-    if (ok && !document.querySelector('.modal-backdrop.open')) {
+    // Si empezó un arrastre mientras llegaba el estado, el refresh diferido del subscribe redibuja al soltar
+    if (ok && !document.querySelector('.modal-backdrop.open') && !document.body.classList.contains('todo-dragging')) {
       const view = router.current().split('/')[0];
       if (view !== 'pomodoro') router.refresh();
     }
