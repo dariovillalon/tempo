@@ -240,6 +240,9 @@ export const state = {
   promos: [],  // promociones/cupones: { id, name, source, card, benefit, cadence, validUntil, usedDates:[], notes, url }
   // Empleado: { people: [{ id, name, salary:{amount,cur}, opening:{amount,cur,rate,favor}, months:{ 'YYYY-MM': { salary, advances:[], expenses:[], paid } } }] }
   payroll: { people: [] },
+  // Pendientes: { categories: [{ id, name }], items: [{ id, text, done, catId, createdAt, doneAt }] }.
+  // El orden de los arrays es el orden en pantalla. catId null = "Sin categoría".
+  todos: { categories: [], items: [] },
   reviews: [], // cierres semanales: { id, weekOf (lunes YYYY-MM-DD), done:[], hoursByProject, answers:{}, statusMarkdown, createdAt }
   vault: null,
   lastUsed: { projectId: null, view: 'today' },
@@ -247,6 +250,21 @@ export const state = {
 
 let initialized = false;
 const LAST_USED_KEY = 'tempo.lastUsed';
+
+// Pendientes: deja la forma válida sin perder nada (estados viejos no tienen el campo).
+// Un ítem cuya categoría ya no existe pasa a "Sin categoría" en vez de quedar invisible.
+const normalizeTodos = (t) => {
+  const out = { categories: [], items: [] };
+  if (!t || typeof t !== 'object') return out;
+  out.categories = (Array.isArray(t.categories) ? t.categories : [])
+    .filter(c => c && typeof c.id === 'string')
+    .map(c => ({ ...c, name: typeof c.name === 'string' ? c.name : '' }));
+  const catIds = new Set(out.categories.map(c => c.id));
+  out.items = (Array.isArray(t.items) ? t.items : [])
+    .filter(i => i && typeof i.id === 'string')
+    .map(i => ({ ...i, text: typeof i.text === 'string' ? i.text : '', done: !!i.done, catId: catIds.has(i.catId) ? i.catId : null }));
+  return out;
+};
 
 // ----- Disponibilidad del vault -----
 // El vault de Obsidian vive en el filesystem del Mac: el server local lo puede
@@ -315,6 +333,7 @@ const buildPayload = (src = state) => ({
   billsSeedVersion: src.billsSeedVersion,
   promos: src.promos,
   payroll: src.payroll,
+  todos: src.todos,
   reviews: src.reviews,
   lastUsed: src.lastUsed,
 });
@@ -533,6 +552,7 @@ export const initState = async () => {
     // Empleado (sueldo como cuenta corriente)
     state.payroll ||= { people: [] };
     if (!Array.isArray(state.payroll.people)) state.payroll.people = [];
+    state.todos = normalizeTodos(state.todos);
     // Cierres semanales (reviews) — backfill para estados anteriores
     if (!Array.isArray(state.reviews)) state.reviews = [];
     // Migrate legacy whiteboards: notes[] → items[] with type='sticky'.
@@ -591,6 +611,7 @@ export const reloadState = async () => {
     if (!Array.isArray(state.reviews)) state.reviews = [];
     state.payroll ||= { people: [] };
     if (!Array.isArray(state.payroll.people)) state.payroll.people = [];
+    state.todos = normalizeTodos(state.todos);
     notify('change');
     return true;
   } catch (e) { console.warn('reloadState failed', e); return false; }
