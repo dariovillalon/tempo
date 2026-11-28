@@ -74,6 +74,10 @@ Push: lo manda la tarea con la herramienta PushNotification. "Pausar avisos" en 
      - Otras aerolíneas: la pantalla de selección de tarifa con el total.
      - Si el vendedor bloquea la búsqueda automática (pasó con airfrance.us), probar una vez más y,
        si falla, pasar al siguiente vendedor; si no hay otro, anotar la ruta en `failures`.
+   - **`links` tiene que llevar al vuelo, no a la página de inicio del vendedor.** Usar la URL de
+     búsqueda con las fechas (Arajet y Despegar la tienen). Si el vendedor no tiene una así
+     (airfrance.us, delta.com, aa.com), poner la URL de Google Flights del primer punto con la ida
+     y la vuelta validadas. Si falta, el server agrega esa búsqueda de Google a las idas y vueltas.
    - Nunca loguearse, nunca cargar datos personales, nunca tocar pagar/confirmar. Rechazar cookies
      no esenciales. Cerrar todas las pestañas propias al terminar.
 4. Armar el JSON y subirlo con `node vuelos-tempo.mjs report <archivo>`:
