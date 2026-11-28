@@ -1821,12 +1821,27 @@ function sanitizeDeal(raw, nowTs) {
     beach: !!raw.beach,
     region: fStr(raw.region, 20),
     notes: (Array.isArray(raw.notes) ? raw.notes : []).slice(0, 6).map(n => fStr(n, 300)).filter(Boolean),
-    links: (Array.isArray(raw.links) ? raw.links : []).slice(0, 4)
-      .map(l => ({ label: fStr(l?.label, 60) || 'Ver', url: fUrl(l?.url) })).filter(l => l.url),
+    links: withDatedLink((Array.isArray(raw.links) ? raw.links : []).slice(0, 4)
+      .map(l => ({ label: fStr(l?.label, 60) || 'Ver', url: fUrl(l?.url) })).filter(l => l.url), kind, legs),
     evidence: fStr(raw.evidence, 1000),
     validated: raw.validated !== false,
     validatedAt: fTs(raw.validatedAt) ?? nowTs,
   } };
+}
+
+// Un aviso tiene que llevar al vuelo. Hay vendedores sin link a una búsqueda con fechas
+// (airfrance.us): la tarea guardaba la página de inicio y el mail no servía para llegar.
+// Si ningún link de una ida y vuelta trae la fecha de ida, se agrega la búsqueda de
+// Google Flights con esas fechas (de ahí "Continuar" lleva al vendedor).
+function googleFlightsUrl(legs) {
+  const a = legs[0], b = legs[legs.length - 1];
+  const q = `Flights from ${a.from} to ${a.to} on ${a.date} through ${b.date}`;
+  return `https://www.google.com/travel/flights?q=${encodeURIComponent(q)}&curr=USD&hl=es-419&gl=AR`;
+}
+function withDatedLink(links, kind, legs) {
+  if (kind !== 'roundtrip' || legs.length !== 2 || !legs[0].date || !legs[1].date) return links;
+  if (links.some(l => l.url.includes(legs[0].date))) return links;
+  return [...links.slice(0, 3), { label: 'Ver el vuelo en Google Flights', url: googleFlightsUrl(legs) }];
 }
 
 function dealVerdict(deal) {
